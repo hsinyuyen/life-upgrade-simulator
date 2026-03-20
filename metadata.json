@@ -1,0 +1,8 @@
+{
+  "name": "LevelUp: Life RPG",
+  "description": "A gamified lifestyle upgrading app that turns your daily activities into XP. Log habits, track progress, and chat with an AI life coach to level up your real life.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

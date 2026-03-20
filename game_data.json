@@ -1,0 +1,181 @@
+{
+  "points_system": [
+    {
+      "item": "Time Of Day Multiplier",
+      "category": "Time Completed (or started for T entries)",
+      "base_points": "Category"
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    },
+    {
+      "item": "2",
+      "category": "10",
+      "base_points": 10
+    }
+  ],
+  "routines": [
+    "Dinner",
+    "Dishes",
+    "Prep breakfast",
+    "Prep workout clothing",
+    "Prep post shower clothing",
+    "Prep waterbottle",
+    "Bed",
+    "Take vitamins",
+    "Drink water",
+    "Get dressed",
+    "Take breakfast and bottle on walk",
+    "Eat while walking",
+    "Do the 4 phone things on the way to the water station",
+    "Fill bottle of water",
+    "workout [at least one rep]",
+    "Walk home",
+    "Protein",
+    "Teeth",
+    "Shower",
+    "Get to work"
+  ],
+  "stats": {
+    "totalPoints": 0,
+    "level": 1,
+    "coins": 0
+  }
+}
