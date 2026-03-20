@@ -42,7 +42,7 @@ import { StoryPanel } from './components/StoryPanel';
 import { storageService } from './services/storageService';
 import { seedanceService } from './services/seedanceService';
 
-const lifeLogo = '/life_logo.png';
+const lifeLogo = './life_logo.png';
 
 const XP_SEQUENCE = [1000, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000, 18000];
 
@@ -679,27 +679,27 @@ const App: React.FC = () => {
     const level = stats.level;
     const levelAvatars: Record<number, { normal: string; buffed: string; debuffed: string; both: string }> = {
       1: {
-        normal: '/avatars/level1/lv1.gif',
-        buffed: '/avatars/level1/lv1_buff.gif',
-        debuffed: '/avatars/level1/lv1_debuff.gif',
-        both: '/avatars/level1/lv1_buff_debuff.gif',
+        normal: './avatars/level1/lv1.gif',
+        buffed: './avatars/level1/lv1_buff.gif',
+        debuffed: './avatars/level1/lv1_debuff.gif',
+        both: './avatars/level1/lv1_buff_debuff.gif',
       },
       2: {
-        normal: '/avatars/level2/Gemini_Generated_Image_yk0x3vyk0x3vyk0x.png',
-        buffed: '/avatars/level2/lv2_buff.png',
-        debuffed: '/avatars/level2/lv2_debuff.png',
-        both: '/avatars/level2/lv2_debuff_buff.png',
+        normal: './avatars/level2/Gemini_Generated_Image_yk0x3vyk0x3vyk0x.png',
+        buffed: './avatars/level2/lv2_buff.png',
+        debuffed: './avatars/level2/lv2_debuff.png',
+        both: './avatars/level2/lv2_debuff_buff.png',
       },
       3: {
-        normal: '/avatars/level3/Gemini_Generated_Image_eay8mjeay8mjeay8.png',
-        buffed: '/avatars/level3/lv3_buff.png',
-        debuffed: '/avatars/level3/lv3_debuff.png',
-        both: '/avatars/level3/lv3_debuff_buff.png',
+        normal: './avatars/level3/Gemini_Generated_Image_eay8mjeay8mjeay8.png',
+        buffed: './avatars/level3/lv3_buff.png',
+        debuffed: './avatars/level3/lv3_debuff.png',
+        both: './avatars/level3/lv3_debuff_buff.png',
       },
     };
     const levelNormalsOnly: Record<number, string> = {
-      4: '/avatars/level4/Gemini_Generated_Image_zcw38szcw38szcw3.png',
-      5: '/avatars/level5/Gemini_Generated_Image_hvfgqmhvfgqmhvfg.png',
+      4: './avatars/level4/Gemini_Generated_Image_zcw38szcw38szcw3.png',
+      5: './avatars/level5/Gemini_Generated_Image_hvfgqmhvfgqmhvfg.png',
     };
 
     let avatarPath: string;
