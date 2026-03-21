@@ -2,6 +2,44 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { Mic, MicOff, X } from 'lucide-react';
+import { WorkoutData, DietData, UserStats } from '../types';
+
+function buildSystemPrompt(stats?: UserStats, workoutData?: WorkoutData, dietData?: DietData): string {
+  let prompt = `You are the 'Life Guide', a friendly, knowledgeable fitness and nutrition coach in a life simulation game. You help the user with:
+1. **Strength Training** — program design, form cues, progressive overload, periodization
+2. **Cardio Planning** — HIIT, LISS, conditioning, endurance programming based on their goals
+3. **Diet & Nutrition** — meal planning, macro targets, calorie management, supplement advice
+4. **Recovery** — sleep, deload weeks, fatigue management
+Use positive, gamified language. Be concise and actionable. Speak in the user's language (if they speak Chinese, reply in Chinese).`;
+
+  if (stats) {
+    prompt += `\n\nUser Profile: Level ${stats.level}, ${stats.xp} XP.`;
+  }
+
+  if (dietData?.profile) {
+    const p = dietData.profile;
+    prompt += `\nDiet Profile: ${p.heightCm}cm, ${p.weightKg}kg, Goal: ${p.goal}, Activity: ${p.activityLevel}.`;
+    if (p.tdee) prompt += ` TDEE: ${p.tdee}kcal, Target: ${p.targetCalories}kcal.`;
+  }
+
+  if (workoutData) {
+    const recentSessions = workoutData.sessions.slice(-5);
+    if (recentSessions.length > 0) {
+      prompt += `\nRecent ${recentSessions.length} workouts: ${recentSessions.map(s =>
+        `${s.date}: ${s.bodyParts.join('+')} (${s.exercises.length} exercises, ${s.totalSets} sets)`
+      ).join('; ')}.`;
+    }
+    if (workoutData.trainingProgram) {
+      const tp = workoutData.trainingProgram;
+      prompt += `\nCurrent Program: "${tp.name}", Phase: ${tp.phase}, Week ${tp.currentWeek}/${tp.totalWeeks}, ${tp.daysPerWeek}x/week.`;
+    }
+    if (workoutData.currentCycle) {
+      prompt += `\nTraining Cycle: Phase ${workoutData.currentCycle.phase}, Fatigue ${workoutData.currentCycle.accumulatedFatigue}/10.`;
+    }
+  }
+
+  return prompt;
+}
 
 // Decoding/Encoding Helpers
 function decode(base64: string) {
@@ -43,9 +81,12 @@ async function decodeAudioData(
 
 interface LiveCoachProps {
   onClose: () => void;
+  stats?: UserStats;
+  workoutData?: WorkoutData;
+  dietData?: DietData;
 }
 
-export const LiveCoach: React.FC<LiveCoachProps> = ({ onClose }) => {
+export const LiveCoach: React.FC<LiveCoachProps> = ({ onClose, stats, workoutData, dietData }) => {
   const [isClosing, setIsClosing] = useState(false);
   const [isActive, setIsActive] = useState(false);
 
@@ -130,7 +171,7 @@ export const LiveCoach: React.FC<LiveCoachProps> = ({ onClose }) => {
         config: {
           responseModalities: [Modality.AUDIO],
           outputAudioTranscription: {},
-          systemInstruction: "You are the 'Life Guide', a friendly, upbeat mentor in a life simulation game. Help the user level up their Health, Career, and Knowledge. Use positive, gamified language.",
+          systemInstruction: buildSystemPrompt(stats, workoutData, dietData),
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } }
           }

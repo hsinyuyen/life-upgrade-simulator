@@ -1934,7 +1934,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {showCoach && <LiveCoach onClose={() => setShowCoach(false)} />}
+      {showCoach && <LiveCoach onClose={() => setShowCoach(false)} stats={stats} workoutData={workoutData} dietData={dietData} />}
       
       {showAdmin && user && (
         <AdminPanel 

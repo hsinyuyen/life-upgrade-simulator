@@ -3,7 +3,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import {
   WorkoutData, WorkoutSession, Exercise, ExerciseSet, BodyPart, BODY_PARTS,
   DietData, SavedExercise, WorkoutRoutine, TrainingPhase, ExerciseType,
-  TrainingCycle, E1RMEntry, TrainingProgram, ProgramDay,
+  TrainingCycle, E1RMEntry, TrainingProgram, ProgramDay, IterationLog,
   EXERCISE_TIER_CONFIG, PHASE_CONFIG,
 } from '../types';
 import { geminiService, STAContext } from '../services/geminiService';
@@ -426,6 +426,16 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
       geminiService.iterateProgram(updatedProgram, session, dayToMark, iterCtx).then(result => {
         setTrainingProgram(result.updatedProgram);
         setIterationNotice(result.summary);
+        const newLog: IterationLog = {
+          id: `iter_${Date.now()}`,
+          date: new Date().toISOString().split('T')[0],
+          timestamp: Date.now(),
+          sessionId: session.id,
+          summary: result.summary,
+          weekNumber: trainingProgram.currentWeek,
+          dayNumber: trainingProgram.currentDayInWeek,
+        };
+        const updatedLogs = [...(workoutData.iterationLogs || []), newLog];
         const iterData: WorkoutData = {
           sessions: newSessions,
           exercisePRs: newPRs,
@@ -434,6 +444,7 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
           currentCycle: updatedCycle,
           exerciseE1RMs: newE1RMs,
           trainingProgram: result.updatedProgram,
+          iterationLogs: updatedLogs,
         };
         onSave(iterData);
         setTimeout(() => setIterationNotice(null), 10000);
@@ -826,30 +837,30 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
                       </div>
                     )}
 
-                    <div className="space-y-2 overflow-x-auto">
-                      <div className="grid grid-cols-[auto_1fr_1fr_60px_auto] gap-2 items-center text-xs text-slate-500 font-game px-1 min-w-[340px]">
-                        <span>SET</span>
-                        <span>WEIGHT (kg)</span>
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-[28px_1fr_1fr_52px_28px] gap-1.5 items-center text-xs text-slate-500 font-game px-1">
+                        <span className="text-center">#</span>
+                        <span>WEIGHT</span>
                         <span>REPS</span>
-                        <span>RPE</span>
+                        <span className="text-center">RPE</span>
                         <span></span>
                       </div>
                       {ex.sets.map((set, setIdx) => (
-                        <div key={setIdx} className="grid grid-cols-[auto_1fr_1fr_60px_auto] gap-2 items-center min-w-[340px]">
-                          <span className="text-xs text-slate-500 font-bold w-6 text-center">{setIdx + 1}</span>
+                        <div key={setIdx} className="grid grid-cols-[28px_1fr_1fr_52px_28px] gap-1.5 items-center">
+                          <span className="text-xs text-slate-500 font-bold text-center">{setIdx + 1}</span>
                           <input
                             type="number"
                             value={set.weight || ''}
                             onChange={(e) => updateSet(exIdx, setIdx, 'weight', parseFloat(e.target.value) || 0)}
-                            placeholder="0"
-                            className="bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-1 ring-rose-500/50 placeholder:text-slate-600"
+                            placeholder="kg"
+                            className="bg-slate-950 border border-white/10 rounded-lg px-2 py-2 text-white text-sm w-full focus:outline-none focus:ring-1 ring-rose-500/50 placeholder:text-slate-600"
                           />
                           <input
                             type="number"
                             value={set.reps || ''}
                             onChange={(e) => updateSet(exIdx, setIdx, 'reps', parseInt(e.target.value) || 0)}
                             placeholder="0"
-                            className="bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-1 ring-rose-500/50 placeholder:text-slate-600"
+                            className="bg-slate-950 border border-white/10 rounded-lg px-2 py-2 text-white text-sm w-full focus:outline-none focus:ring-1 ring-rose-500/50 placeholder:text-slate-600"
                           />
                           <input
                             type="number"
@@ -858,11 +869,11 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
                             placeholder="RPE"
                             min={1}
                             max={10}
-                            className="bg-slate-950 border border-white/10 rounded-lg px-2 py-2 text-amber-300 text-sm text-center focus:outline-none focus:ring-1 ring-amber-500/50 placeholder:text-slate-600 w-[60px]"
+                            className="bg-slate-950 border border-white/10 rounded-lg px-1 py-2 text-amber-300 text-sm text-center w-full focus:outline-none focus:ring-1 ring-amber-500/50 placeholder:text-slate-600"
                           />
                           <button
                             onClick={() => removeSet(exIdx, setIdx)}
-                            className="text-slate-600 hover:text-red-400 p-1"
+                            className="text-slate-600 hover:text-red-400 p-1 flex justify-center"
                             disabled={ex.sets.length <= 1}
                           >
                             <Minus size={14} />
@@ -978,6 +989,38 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
         {/* ===== HISTORY TAB ===== */}
         {activeTab === 'history' && (
           <div className="space-y-3">
+            {/* AI Iteration Logs */}
+            {(workoutData.iterationLogs?.length ?? 0) > 0 && (
+              <div className="bg-slate-900/60 border border-violet-500/20 rounded-2xl overflow-hidden">
+                <button
+                  onClick={() => setExpandedSession(expandedSession === 'ai-logs' ? null : 'ai-logs')}
+                  className="w-full p-4 flex items-center gap-3 hover:bg-slate-800/40 transition-all"
+                >
+                  <div className="w-10 h-10 bg-violet-500/10 border border-violet-500/20 rounded-full flex items-center justify-center text-violet-400">
+                    <Zap size={18} />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <div className="font-bold text-white text-sm">AI Analysis History</div>
+                    <div className="text-xs text-slate-400">{workoutData.iterationLogs!.length} iterations</div>
+                  </div>
+                  {expandedSession === 'ai-logs' ? <ChevronUp size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
+                </button>
+                {expandedSession === 'ai-logs' && (
+                  <div className="px-4 pb-4 space-y-2 border-t border-white/5 pt-3 max-h-64 overflow-y-auto">
+                    {[...workoutData.iterationLogs!].reverse().map(log => (
+                      <div key={log.id} className="bg-slate-950/60 rounded-xl p-3 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-violet-400 font-bold">W{log.weekNumber} D{log.dayNumber}</span>
+                          <span className="text-xs text-slate-500">{log.date}</span>
+                        </div>
+                        <p className="text-sm text-slate-300">{log.summary}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {sessions.length > 0 ? sessions.map(session => {
               const isExpanded = expandedSession === session.id;
               return (

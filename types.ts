@@ -384,6 +384,16 @@ export interface TrainingProgram {
   lastIteratedAt?: number;
 }
 
+export interface IterationLog {
+  id: string;
+  date: string;
+  timestamp: number;
+  sessionId: string;
+  summary: string;
+  weekNumber: number;
+  dayNumber: number;
+}
+
 export interface WorkoutData {
   sessions: WorkoutSession[];
   exercisePRs: ExercisePR;
@@ -392,6 +402,7 @@ export interface WorkoutData {
   currentCycle?: TrainingCycle;
   exerciseE1RMs?: Record<string, E1RMEntry[]>;
   trainingProgram?: TrainingProgram;
+  iterationLogs?: IterationLog[];
 }
 
 // ===== Story Quest Types =====
