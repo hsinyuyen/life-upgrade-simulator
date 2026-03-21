@@ -12,14 +12,22 @@ export interface STAContext {
 }
 
 export class GeminiService {
-  private ai: GoogleGenAI;
+  private ai: GoogleGenAI | null = null;
 
   constructor() {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.warn("Gemini API Key is missing! Please check your .env file.");
+    } else {
+      this.ai = new GoogleGenAI({ apiKey });
     }
-    this.ai = new GoogleGenAI({ apiKey: apiKey || "" });
+  }
+
+  private getAI(): GoogleGenAI {
+    if (!this.ai) {
+      throw new Error("Gemini API Key is not configured. AI features are unavailable.");
+    }
+    return this.ai;
   }
 
   async analyzeActivity(description: string): Promise<GeminiAnalysisResponse> {
@@ -30,7 +38,7 @@ export class GeminiService {
     Family & Socializing = time with family, friends, community, social events.
     Provide a super short, fun game-like encouragement message.`;
 
-    const response = await this.ai.models.generateContent({
+    const response = await this.getAI().models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts: [{ text: prompt }] },
       config: {
@@ -68,7 +76,7 @@ export class GeminiService {
     
     Evaluate strictly. Only approve genuinely urgent/important tasks.`;
 
-    const response = await this.ai.models.generateContent({
+    const response = await this.getAI().models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts: [{ text: prompt }] },
       config: {
@@ -119,7 +127,7 @@ export class GeminiService {
     Return valid JSON.`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
         config: {
@@ -163,7 +171,7 @@ export class GeminiService {
     If Family & Social is high, add warm, friendly, or community-oriented elements.
     The style must be 3D rendered, vibrant, and heroic.`;
 
-    const response = await this.ai.models.generateContent({
+    const response = await this.getAI().models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
         parts: [
@@ -229,7 +237,7 @@ Padding: Leave large empty spaces (at least 20% of the image height) at both the
 Background: Simple dark gradient background. Square format.`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: {
           parts: [
@@ -302,7 +310,7 @@ Background: Simple dark gradient background. Square format.`;
     }`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
         config: {
@@ -361,7 +369,7 @@ Background: Simple dark gradient background. Square format.`;
     Return JSON: { "analysis": "...", "suggestedChanges": ["change1", "change2"], "newPlan": null | { recipes, groceryList, totalCalories, totalProtein, totalCarbs, totalFat, aiNotes } }`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
         config: {
@@ -491,7 +499,7 @@ User's question: "${question}"
 Give concise, actionable advice. Reference specific data. Under 300 words. Friendly tone.`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
       });
@@ -605,7 +613,7 @@ ${workoutSummary}`;
     }
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: messages,
       });
@@ -723,7 +731,7 @@ Only modify FUTURE uncompleted days/weeks. Keep completed data unchanged.
 Include a brief 1-2 sentence summary of what you changed.`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
       });
@@ -783,7 +791,7 @@ Include a brief 1-2 sentence summary of what you changed.`;
     }`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
         config: { responseMimeType: 'application/json' }
@@ -857,7 +865,7 @@ Include a brief 1-2 sentence summary of what you changed.`;
     }`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
         config: { responseMimeType: 'application/json' }
@@ -885,7 +893,7 @@ Include a brief 1-2 sentence summary of what you changed.`;
     ${allChapters}`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
       });
@@ -906,7 +914,7 @@ Include a brief 1-2 sentence summary of what you changed.`;
     No text in the image.`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: {
           parts: [{ text: prompt }],
@@ -945,7 +953,7 @@ Include a brief 1-2 sentence summary of what you changed.`;
     }`;
 
     try {
-      const response = await this.ai.models.generateContent({
+      const response = await this.getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: {
           parts: [
