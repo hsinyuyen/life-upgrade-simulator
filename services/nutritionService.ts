@@ -71,7 +71,7 @@ class NutritionService {
       
       Be extremely accurate with real nutritional data. Include common variations (e.g., "Cooked", "Raw", "Brand Name" if applicable).`;
 
-      const response = await (geminiService as any).ai.models.generateContent({
+      const response = await (geminiService as any).getAI().models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: prompt }] },
         config: {
