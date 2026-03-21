@@ -80,7 +80,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ questItems, onSave, onCl
   };
 
   return (
-    <div className={`fixed inset-0 bg-slate-900/95 backdrop-blur-md z-[600] flex flex-col p-6 ${isClosing ? 'tv-screen-off' : 'tv-screen-on'}`}>
+    <div className={`fixed inset-0 bg-slate-900/95 backdrop-blur-md z-[600] flex flex-col p-6 ${isClosing ? 'tv-screen-off' : 'tv-screen-on'}`} style={{ paddingTop: 'max(env(safe-area-inset-top), 28px)' }}>
       <div className="flex justify-between items-center mb-6">
         <h2 className="font-game text-2xl text-white">ADMIN PANEL</h2>
         <button onClick={handleClose} className="p-2 bg-white/10 rounded-full text-white hover:bg-white/20 transition-colors">
