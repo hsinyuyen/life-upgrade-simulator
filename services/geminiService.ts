@@ -657,7 +657,9 @@ ${workoutSummary}`;
           targetMuscles: e.targetMuscles || d.bodyParts || [],
           notes: e.notes ?? '',
         })),
-        completed: false,
+        completed: d.completed ?? false,
+        completedSessionId: d.completedSessionId,
+        completedAt: d.completedAt,
       })),
     }));
 
@@ -672,9 +674,9 @@ ${workoutSummary}`;
       weeks,
       createdAt: Date.now(),
       aiNotes: parsed.aiNotes || '',
-      currentWeek: 1,
-      currentDayInWeek: 1,
-      iterationCount: 0,
+      currentWeek: parsed.currentWeek ?? 1,
+      currentDayInWeek: parsed.currentDayInWeek ?? 1,
+      iterationCount: parsed.iterationCount ?? 0,
     };
   }
 
@@ -743,10 +745,39 @@ Include a brief 1-2 sentence summary of what you changed.`;
         try {
           const parsed = JSON.parse(jsonMatch2[1]);
           const normalized = this.normalizeProgram(parsed);
+          // Merge completed status from original program to prevent AI from losing it
+          const mergedWeeks = normalized.weeks.map((nw, wi) => {
+            const origWeek = program.weeks[wi];
+            if (!origWeek) return nw;
+            return {
+              ...nw,
+              days: nw.days.map((nd, di) => {
+                const origDay = origWeek.days[di];
+                if (origDay?.completed) {
+                  return { ...nd, completed: true, completedSessionId: origDay.completedSessionId, completedAt: origDay.completedAt };
+                }
+                return nd;
+              }),
+            };
+          });
+          // Recalculate current position from merged data
+          let calcWeek = 1;
+          let calcDay = 1;
+          for (const w of mergedWeeks) {
+            const uncompletedIdx = w.days.findIndex(d => !d.completed);
+            if (uncompletedIdx >= 0) {
+              calcWeek = w.weekNumber;
+              calcDay = uncompletedIdx + 1;
+              break;
+            }
+          }
           updatedProgram = {
             ...normalized,
+            weeks: mergedWeeks,
             id: program.id,
             createdAt: program.createdAt,
+            currentWeek: calcWeek,
+            currentDayInWeek: calcDay,
             iterationCount: program.iterationCount + 1,
             lastIteratedAt: Date.now(),
           };
