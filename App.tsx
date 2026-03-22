@@ -1953,6 +1953,7 @@ const App: React.FC = () => {
         <DietPanel
           key={`diet-${user.uid}`}
           dietData={dietData}
+          workoutData={workoutData}
           onSave={(data) => {
             setDietData(data);
             syncToFirebase(stats, activities, undefined, data);

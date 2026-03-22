@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { DietData, DietProfile, BodyLog, DietPlan, Recipe, GroceryItem, FoodEntry, SavedFood, DailyNutritionLog, NutritionData, MacroTargets } from '../types';
+import { DietData, DietProfile, BodyLog, DietPlan, Recipe, GroceryItem, FoodEntry, SavedFood, DailyNutritionLog, NutritionData, MacroTargets, WorkoutData } from '../types';
 import { geminiService } from '../services/geminiService';
 import { nutritionService, SearchFoodResult } from '../services/nutritionService';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -18,11 +18,12 @@ interface DietPanelProps {
   onClose: () => void;
   onNutritionBuff?: () => void; // callback when macro target is hit
   onNutritionDebuff?: () => void; // callback when macro target is exceeded
+  workoutData?: WorkoutData;
 }
 
 type Tab = 'profile' | 'plan' | 'grocery' | 'logs' | 'nutrition';
 
-export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose, onNutritionBuff, onNutritionDebuff }) => {
+export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose, onNutritionBuff, onNutritionDebuff, workoutData }) => {
   const [isClosing, setIsClosing] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>(dietData.profile ? 'plan' : 'profile');
 
@@ -512,7 +513,7 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
   const handleGeneratePlan = async () => {
     setIsGenerating(true);
     try {
-      const plan = await geminiService.generateDietPlan(profile);
+      const plan = await geminiService.generateDietPlan(profile, workoutData);
       if (plan) {
         setCurrentPlan(plan);
         setActiveTab('plan');

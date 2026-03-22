@@ -283,8 +283,30 @@ Background: Simple dark gradient background. Square format.`;
     return results as { normal: string; buff: string; debuff: string; both: string };
   }
 
-  async generateDietPlan(profile: DietProfile): Promise<DietPlan | null> {
-    const prompt = `You are an expert nutritionist. Create a complete daily diet plan based on these stats:
+  async generateDietPlan(profile: DietProfile, workoutData?: WorkoutData): Promise<DietPlan | null> {
+    let trainingContext = '';
+    if (workoutData) {
+      const tp = workoutData.trainingProgram;
+      if (tp) {
+        trainingContext += `\n## Current Training Program:
+    - Program: "${tp.name}"
+    - Phase: ${tp.phase} (${tp.phase === 'Bulk' ? 'caloric surplus needed' : tp.phase === 'Cut' ? 'caloric deficit, high protein to preserve muscle' : 'slight deficit or maintenance'})
+    - Split: ${tp.splitType}, ${tp.daysPerWeek} training days/week
+    - Week ${tp.currentWeek} of ${tp.totalWeeks}
+    - IMPORTANT: Align calorie/macro targets with this training phase.`;
+      }
+      if (workoutData.currentCycle) {
+        const cycle = workoutData.currentCycle;
+        trainingContext += `\n    - Training Cycle Phase: ${cycle.phase}, Fatigue: ${cycle.accumulatedFatigue}/10`;
+      }
+      const recentSessions = workoutData.sessions.slice(-5);
+      if (recentSessions.length > 0) {
+        const avgSets = Math.round(recentSessions.reduce((s, sess) => s + sess.totalSets, 0) / recentSessions.length);
+        trainingContext += `\n    - Recent avg volume: ${avgSets} sets/session across ${recentSessions.length} workouts`;
+      }
+    }
+
+    const prompt = `You are an expert nutritionist who integrates diet with training. Create a complete daily diet plan based on these stats:
     - Height: ${profile.height}cm
     - Weight: ${profile.weight}kg
     ${profile.muscleMass ? `- Muscle Mass: ${profile.muscleMass}kg` : ''}
@@ -292,11 +314,18 @@ Background: Simple dark gradient background. Square format.`;
     - Goal: ${profile.goal.toUpperCase()} (${profile.goal === 'bulk' ? 'gain muscle/weight' : profile.goal === 'cut' ? 'lose fat, preserve muscle' : 'lose fat and gain muscle simultaneously'})
     - Diet Preferences: ${profile.preferences || 'None specified'}
     ${profile.targetCalories ? `- Target Calories: ${profile.targetCalories}` : ''}
+    ${trainingContext}
+
+    ${workoutData?.trainingProgram ? `Base your calorie and macro calculations on the training phase:
+    - Bulk: surplus 300-500kcal above TDEE, protein 1.8-2.2g/kg, higher carbs for performance
+    - Cut: deficit 300-500kcal below TDEE, protein 2.2-2.8g/kg to preserve muscle, moderate carbs
+    - Recomp: near maintenance, protein 2.0-2.4g/kg, cycle carbs around training days
+    - Consider training volume and fatigue when setting carb intake.` : ''}
 
     Create exactly 4-6 recipes (covering breakfast, lunch, dinner, and 1-2 snacks).
     Also generate a consolidated grocery list from all recipes.
     Calculate appropriate macros for the goal.
-    Include an "aiNotes" field with brief dietary advice.
+    Include an "aiNotes" field with brief dietary advice${workoutData?.trainingProgram ? ' that references how the diet supports the current training phase' : ''}.
 
     IMPORTANT: Return valid JSON matching this exact structure:
     {
