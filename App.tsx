@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { UserStats, Activity, Category, QuestItem, DailyDebuff, EmergencyDebuff, DietData, NutritionBuff, WorkoutData, StoryState, StoryChapter, CharacterSkin, SkinDecoration } from './types';
+import { UserStats, Activity, Category, QuestItem, DailyDebuff, EmergencyDebuff, DietData, NutritionBuff, WorkoutData, StoryState, StoryChapter, CharacterSkin, SkinDecoration, WeeklyReport, TrendSnapshot } from './types';
 import { AvatarSection } from './components/AvatarSection';
 import { AdminPanel } from './components/AdminPanel';
 import { DietPanel } from './components/DietPanel';
@@ -41,6 +41,7 @@ import { QuestPanel } from './components/QuestPanel';
 import { StoryPanel } from './components/StoryPanel';
 import { storageService } from './services/storageService';
 import { seedanceService } from './services/seedanceService';
+import { trainingEngine } from './services/trainingEngine';
 
 const lifeLogo = './life_logo.png';
 
@@ -1157,6 +1158,24 @@ const App: React.FC = () => {
         }
       }
 
+      // Auto-generate weekly report (check if 7+ days since last report)
+      const lastReport = newWorkoutData?.weeklyReports?.slice(-1)[0];
+      const daysSinceReport = lastReport ? (Date.now() - lastReport.timestamp) / (1000 * 60 * 60 * 24) : 999;
+      if (daysSinceReport >= 7 && newWorkoutData && dietData.profile) {
+        const snapshot = trainingEngine.buildTrendSnapshot(newWorkoutData, dietData);
+        const aiCtx = trainingEngine.buildAIContext(newWorkoutData, dietData);
+        geminiService.generateWeeklyReport(newWorkoutData, dietData, snapshot, aiCtx).then(report => {
+          if (report) {
+            const updatedWorkout = {
+              ...newWorkoutData,
+              weeklyReports: [...(newWorkoutData.weeklyReports || []), report],
+            };
+            setWorkoutData(updatedWorkout);
+            syncToFirebase(newStats, newActivities, undefined, undefined, updatedWorkout);
+          }
+        }).catch(err => console.error('Weekly report failed:', err));
+      }
+
       return newStats;
     });
   };
@@ -1834,6 +1853,49 @@ const App: React.FC = () => {
             <ChevronRight size={18} />
           </button>
         </div>
+
+        {/* Latest Weekly Report */}
+        {workoutData.weeklyReports && workoutData.weeklyReports.length > 0 && (() => {
+          const latest = workoutData.weeklyReports[workoutData.weeklyReports.length - 1];
+          const daysSince = Math.floor((Date.now() - latest.timestamp) / (1000 * 60 * 60 * 24));
+          if (daysSince > 14) return null; // Don't show stale reports
+          return (
+            <div className="px-8 mb-4">
+              <div className="bg-violet-500/10 border border-violet-500/20 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-game text-sm text-violet-400">WEEKLY REPORT</span>
+                  <span className="text-xs text-slate-500">{latest.weekStartDate} ~ {latest.weekEndDate}</span>
+                </div>
+                <p className="text-sm text-slate-300">{latest.aiSummary}</p>
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  <div>
+                    <div className="text-lg font-bold text-rose-400">{latest.totalSessions}</div>
+                    <div className="text-[10px] text-slate-500">SESSIONS</div>
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold text-orange-400">{latest.avgCalories}</div>
+                    <div className="text-[10px] text-slate-500">AVG KCAL</div>
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold text-emerald-400">{latest.dietCompliancePct}%</div>
+                    <div className="text-[10px] text-slate-500">COMPLY</div>
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold text-blue-400">{latest.avgReadiness}</div>
+                    <div className="text-[10px] text-slate-500">READY</div>
+                  </div>
+                </div>
+                {latest.aiRecommendations.length > 0 && (
+                  <div className="space-y-1 pt-1 border-t border-white/5">
+                    {latest.aiRecommendations.slice(0, 3).map((rec, i) => (
+                      <p key={i} className="text-xs text-slate-400">• {rec}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Bottom Action Buttons */}
       <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-40 items-center">

@@ -5,6 +5,7 @@ import {
   DietData, SavedExercise, WorkoutRoutine, TrainingPhase, ExerciseType,
   TrainingCycle, E1RMEntry, TrainingProgram, ProgramDay, IterationLog,
   EXERCISE_TIER_CONFIG, PHASE_CONFIG,
+  CardioSession, CardioType, RecoveryScore,
 } from '../types';
 import { geminiService, STAContext } from '../services/geminiService';
 import { trainingEngine } from '../services/trainingEngine';
@@ -12,7 +13,8 @@ import {
   X, Plus, Minus, Dumbbell, Trophy, MessageCircle,
   Send, Loader2, ChevronDown, ChevronUp, Trash2,
   Flame, Star, Clock, BarChart3, Zap, Search, Save, BookOpen,
-  TrendingUp, AlertTriangle, Target, Calendar, Play, CheckCircle2
+  TrendingUp, AlertTriangle, Target, Calendar, Play, CheckCircle2,
+  Heart, Timer, Activity
 } from 'lucide-react';
 
 interface WorkoutPanelProps {
@@ -23,7 +25,7 @@ interface WorkoutPanelProps {
   onClose: () => void;
 }
 
-type Tab = 'log' | 'history' | 'coach';
+type Tab = 'log' | 'history' | 'cardio' | 'coach';
 
 export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietData, onSave, onWorkoutXP, onClose }) => {
   const [isClosing, setIsClosing] = useState(false);
@@ -79,6 +81,20 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
   const [planChatHistory, setPlanChatHistory] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
   const [pendingProgram, setPendingProgram] = useState<TrainingProgram | undefined>();
   const [iterationNotice, setIterationNotice] = useState<string | null>(null);
+
+  // Cardio state
+  const [cardioSessions, setCardioSessions] = useState<CardioSession[]>(workoutData.cardioSessions || []);
+  const [showAddCardio, setShowAddCardio] = useState(false);
+  const [cardioForm, setCardioForm] = useState<{type: CardioType; activity: string; duration: string; calories: string; avgHR: string; distance: string; rpe: string; notes: string}>({
+    type: 'LISS', activity: '', duration: '', calories: '', avgHR: '', distance: '', rpe: '', notes: ''
+  });
+
+  // Recovery state
+  const [showRecoveryCheck, setShowRecoveryCheck] = useState(false);
+  const [recoveryForm, setRecoveryForm] = useState({
+    sleepHours: '7', sleepQuality: '7', muscleSoreness: '3', energyLevel: '7', stressLevel: '3'
+  });
+  const [todayReadiness, setTodayReadiness] = useState<number | null>(null);
 
   React.useEffect(() => {
     trainingEngine.setPhase(currentCycle.phase);
@@ -423,7 +439,8 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
         exerciseE1RMs: newE1RMs,
         exerciseTypes,
       };
-      geminiService.iterateProgram(updatedProgram, session, dayToMark, iterCtx).then(result => {
+      const aiCtx = trainingEngine.buildAIContext(workoutData, dietData);
+      geminiService.iterateProgram(updatedProgram, session, dayToMark, iterCtx, aiCtx).then(result => {
         setTrainingProgram(result.updatedProgram);
         setIterationNotice(result.summary);
         const newLog: IterationLog = {
@@ -473,8 +490,9 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
     if (!coachQuestion.trim()) return;
     setIsCoachThinking(true);
     try {
+      const aiCtx = trainingEngine.buildAIContext(workoutData, dietData);
       const answer = await geminiService.workoutCoachAdvice(
-        coachQuestion, sessions, dietData, staContext
+        coachQuestion, sessions, dietData, staContext, aiCtx
       );
       setChatHistory(prev => [...prev, { q: coachQuestion, a: answer }]);
       setCoachResponse(answer);
@@ -537,9 +555,51 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
     setActiveTab('log');
   };
 
+  const handleAddCardio = () => {
+    const session: CardioSession = {
+      id: `cardio_${Date.now()}`,
+      date: new Date().toISOString().split('T')[0],
+      timestamp: Date.now(),
+      type: cardioForm.type,
+      activity: cardioForm.activity || cardioForm.type,
+      durationMinutes: parseInt(cardioForm.duration) || 0,
+      caloriesBurned: cardioForm.calories ? parseInt(cardioForm.calories) : undefined,
+      avgHeartRate: cardioForm.avgHR ? parseInt(cardioForm.avgHR) : undefined,
+      distanceKm: cardioForm.distance ? parseFloat(cardioForm.distance) : undefined,
+      rpe: cardioForm.rpe ? parseInt(cardioForm.rpe) : undefined,
+      notes: cardioForm.notes || undefined,
+    };
+    const updated = [...cardioSessions, session];
+    setCardioSessions(updated);
+    onSave({ ...workoutData, cardioSessions: updated });
+    setShowAddCardio(false);
+    setCardioForm({ type: 'LISS', activity: '', duration: '', calories: '', avgHR: '', distance: '', rpe: '', notes: '' });
+  };
+
+  const handleRecoverySubmit = () => {
+    const sleepHours = parseFloat(recoveryForm.sleepHours) || 7;
+    const sleepQuality = parseInt(recoveryForm.sleepQuality) || 7;
+    const muscleSoreness = parseInt(recoveryForm.muscleSoreness) || 3;
+    const energyLevel = parseInt(recoveryForm.energyLevel) || 7;
+    const stressLevel = parseInt(recoveryForm.stressLevel) || 3;
+    const readiness = Math.round(((sleepQuality * 0.3) + (energyLevel * 0.25) + ((10 - muscleSoreness) * 0.25) + ((10 - stressLevel) * 0.2)) * 10) / 10;
+    const score: RecoveryScore = {
+      id: `rec_${Date.now()}`,
+      date: new Date().toISOString().split('T')[0],
+      timestamp: Date.now(),
+      sleepHours, sleepQuality, muscleSoreness, energyLevel, stressLevel,
+      overallReadiness: readiness,
+    };
+    const updated = [...(workoutData.recoveryScores || []), score];
+    setTodayReadiness(readiness);
+    onSave({ ...workoutData, recoveryScores: updated });
+    setShowRecoveryCheck(false);
+  };
+
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: 'log', label: 'WORKOUT', icon: <Dumbbell size={14} /> },
     { key: 'history', label: 'HISTORY', icon: <BarChart3 size={14} /> },
+    { key: 'cardio', label: 'CARDIO', icon: <Activity size={14} /> },
     { key: 'coach', label: 'AI COACH', icon: <MessageCircle size={14} /> },
   ];
 
@@ -580,6 +640,97 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
         {/* ===== LOG TAB ===== */}
         {activeTab === 'log' && (
           <div className="space-y-4">
+            {/* Recovery Readiness Banner */}
+            {todayReadiness === null ? (
+              <button
+                onClick={() => setShowRecoveryCheck(true)}
+                className="w-full bg-violet-600/15 border border-violet-500/30 rounded-2xl py-3 px-4 flex items-center justify-center gap-2 text-violet-400 font-game text-sm hover:bg-violet-600/25 transition-all"
+              >
+                <Heart size={16} /> CHECK READINESS
+              </button>
+            ) : (
+              <div className={`rounded-2xl py-3 px-4 flex items-center gap-3 border ${
+                todayReadiness >= 7 ? 'bg-green-500/10 border-green-500/30' :
+                todayReadiness >= 5 ? 'bg-yellow-500/10 border-yellow-500/30' :
+                'bg-red-500/10 border-red-500/30'
+              }`}>
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg ${
+                  todayReadiness >= 7 ? 'bg-green-500/20 text-green-400' :
+                  todayReadiness >= 5 ? 'bg-yellow-500/20 text-yellow-400' :
+                  'bg-red-500/20 text-red-400'
+                }`}>
+                  {todayReadiness}
+                </div>
+                <div className="flex-1">
+                  <div className="text-sm font-bold text-white">Readiness Score</div>
+                  <div className={`text-xs ${
+                    todayReadiness >= 7 ? 'text-green-400' :
+                    todayReadiness >= 5 ? 'text-yellow-400' :
+                    'text-red-400'
+                  }`}>
+                    {todayReadiness >= 7 ? 'Go hard — push for PRs today' :
+                     todayReadiness >= 5 ? 'Moderate intensity recommended' :
+                     'Consider a light day or active recovery'}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Recovery Check Modal */}
+            {showRecoveryCheck && (
+              <div className="bg-slate-900/80 border border-white/10 rounded-2xl p-4 space-y-4">
+                <h3 className="font-game text-sm text-violet-400 flex items-center gap-2"><Heart size={14} /> RECOVERY CHECK</h3>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">Sleep Hours</label>
+                  <input type="number" step="0.5" min="0" max="14" value={recoveryForm.sleepHours} onChange={e => setRecoveryForm(f => ({...f, sleepHours: e.target.value}))} className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1.5 block">Sleep Quality (1-10)</label>
+                  <div className="flex gap-1">
+                    {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                      <button key={n} onClick={() => setRecoveryForm(f => ({...f, sleepQuality: String(n)}))}
+                        className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${parseInt(recoveryForm.sleepQuality) === n ? 'bg-violet-500/30 text-violet-300 border border-violet-500/40' : 'bg-slate-800 text-slate-500 border border-white/5'}`}
+                      >{n}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1.5 block">Muscle Soreness (1=none, 10=extreme)</label>
+                  <div className="flex gap-1">
+                    {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                      <button key={n} onClick={() => setRecoveryForm(f => ({...f, muscleSoreness: String(n)}))}
+                        className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${parseInt(recoveryForm.muscleSoreness) === n ? 'bg-orange-500/30 text-orange-300 border border-orange-500/40' : 'bg-slate-800 text-slate-500 border border-white/5'}`}
+                      >{n}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1.5 block">Energy Level (1-10)</label>
+                  <div className="flex gap-1">
+                    {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                      <button key={n} onClick={() => setRecoveryForm(f => ({...f, energyLevel: String(n)}))}
+                        className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${parseInt(recoveryForm.energyLevel) === n ? 'bg-green-500/30 text-green-300 border border-green-500/40' : 'bg-slate-800 text-slate-500 border border-white/5'}`}
+                      >{n}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1.5 block">Stress Level (1=calm, 10=overwhelmed)</label>
+                  <div className="flex gap-1">
+                    {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                      <button key={n} onClick={() => setRecoveryForm(f => ({...f, stressLevel: String(n)}))}
+                        className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${parseInt(recoveryForm.stressLevel) === n ? 'bg-red-500/30 text-red-300 border border-red-500/40' : 'bg-slate-800 text-slate-500 border border-white/5'}`}
+                      >{n}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowRecoveryCheck(false)} className="flex-1 py-2 rounded-xl text-sm font-bold border border-white/20 text-slate-400">Cancel</button>
+                  <button onClick={handleRecoverySubmit} className="flex-1 py-2 rounded-xl text-sm font-bold bg-violet-600 text-white">Submit</button>
+                </div>
+              </div>
+            )}
+
             {/* Iteration Notification */}
             {iterationNotice && (
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3 flex items-start gap-2">
@@ -1094,6 +1245,97 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
                 <Dumbbell size={48} className="mx-auto opacity-30" />
                 <p className="font-game text-lg">NO WORKOUTS YET</p>
                 <p className="text-sm text-slate-400">Log your first workout to start tracking</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ===== CARDIO TAB ===== */}
+        {activeTab === 'cardio' && (
+          <div className="space-y-4">
+            {/* Add Cardio Button */}
+            <button onClick={() => setShowAddCardio(true)} className="w-full bg-cyan-600/20 border border-cyan-500/40 rounded-2xl py-3 flex items-center justify-center gap-2 text-cyan-400 font-game hover:bg-cyan-600/30">
+              <Plus size={16} /> LOG CARDIO SESSION
+            </button>
+
+            {/* Add Cardio Form */}
+            {showAddCardio && (
+              <div className="bg-slate-900/80 border border-white/10 rounded-2xl p-4 space-y-3">
+                {/* Type selector: LISS | HIIT | Conditioning | Sport */}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {(['LISS','HIIT','Conditioning','Sport'] as CardioType[]).map(t => (
+                    <button key={t} onClick={() => setCardioForm(f => ({...f, type: t}))}
+                      className={`py-2 rounded-lg text-xs font-bold transition-all ${cardioForm.type === t ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'bg-slate-800 text-slate-400 border border-white/5'}`}
+                    >{t}</button>
+                  ))}
+                </div>
+                {/* Activity name */}
+                <input placeholder="Activity (e.g. Treadmill, Cycling)" value={cardioForm.activity} onChange={e => setCardioForm(f => ({...f, activity: e.target.value}))} className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" />
+                {/* Duration + Calories row */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">Duration (min)</label>
+                    <input type="number" placeholder="30" value={cardioForm.duration} onChange={e => setCardioForm(f => ({...f, duration: e.target.value}))} className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">Calories</label>
+                    <input type="number" placeholder="250" value={cardioForm.calories} onChange={e => setCardioForm(f => ({...f, calories: e.target.value}))} className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" />
+                  </div>
+                </div>
+                {/* HR + Distance + RPE row */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">Avg HR</label>
+                    <input type="number" placeholder="140" value={cardioForm.avgHR} onChange={e => setCardioForm(f => ({...f, avgHR: e.target.value}))} className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">Dist (km)</label>
+                    <input type="number" step="0.1" placeholder="5.0" value={cardioForm.distance} onChange={e => setCardioForm(f => ({...f, distance: e.target.value}))} className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">RPE</label>
+                    <input type="number" min="1" max="10" placeholder="6" value={cardioForm.rpe} onChange={e => setCardioForm(f => ({...f, rpe: e.target.value}))} className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" />
+                  </div>
+                </div>
+                {/* Notes */}
+                <input placeholder="Notes (optional)" value={cardioForm.notes} onChange={e => setCardioForm(f => ({...f, notes: e.target.value}))} className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" />
+                {/* Buttons */}
+                <div className="flex gap-2">
+                  <button onClick={() => setShowAddCardio(false)} className="flex-1 py-2 rounded-xl text-sm font-bold border border-white/20 text-slate-400">Cancel</button>
+                  <button onClick={handleAddCardio} disabled={!cardioForm.duration} className="flex-1 py-2 rounded-xl text-sm font-bold bg-cyan-600 text-white disabled:opacity-50">Save</button>
+                </div>
+              </div>
+            )}
+
+            {/* Cardio History */}
+            {cardioSessions.length > 0 ? (
+              <div className="space-y-2">
+                {[...cardioSessions].reverse().slice(0, 20).map(session => (
+                  <div key={session.id} className="bg-slate-900/60 border border-white/10 rounded-xl p-3 flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
+                      session.type === 'HIIT' ? 'bg-red-500/15 text-red-400' :
+                      session.type === 'LISS' ? 'bg-green-500/15 text-green-400' :
+                      session.type === 'Conditioning' ? 'bg-orange-500/15 text-orange-400' :
+                      'bg-blue-500/15 text-blue-400'
+                    }`}>
+                      {session.type === 'HIIT' ? '\u26A1' : session.type === 'LISS' ? '\uD83C\uDFC3' : session.type === 'Conditioning' ? '\uD83D\uDD25' : '\u26BD'}
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-bold text-white">{session.activity}</div>
+                      <div className="text-xs text-slate-400">{session.date} &bull; {session.type} &bull; {session.durationMinutes}min{session.distanceKm ? ` \u2022 ${session.distanceKm}km` : ''}</div>
+                    </div>
+                    <div className="text-right">
+                      {session.caloriesBurned && <div className="text-sm font-bold text-orange-400">{session.caloriesBurned} kcal</div>}
+                      {session.avgHeartRate && <div className="text-xs text-red-400">{'\u2665'} {session.avgHeartRate} bpm</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-16 text-slate-500 space-y-3">
+                <Activity size={48} className="mx-auto opacity-30" />
+                <p className="font-game text-lg">NO CARDIO YET</p>
+                <p className="text-sm">Log your first cardio session</p>
               </div>
             )}
           </div>

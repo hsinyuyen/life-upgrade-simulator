@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Category, GeminiAnalysisResponse, EmergencyApprovalResponse, UserStats, DietProfile, BodyLog, DietPlan, Recipe, WorkoutSession, DietData, StoryState, StoryChapter, CharacterSkin, TrainingCycle, TrainingPhase, ExerciseType, E1RMEntry, BodyPart, TrainingProgram, ProgramDay, SavedExercise, PHASE_CONFIG } from "../types";
+import { Category, GeminiAnalysisResponse, EmergencyApprovalResponse, UserStats, DietProfile, BodyLog, DietPlan, Recipe, WorkoutSession, DietData, StoryState, StoryChapter, CharacterSkin, TrainingCycle, TrainingPhase, ExerciseType, E1RMEntry, BodyPart, TrainingProgram, ProgramDay, SavedExercise, PHASE_CONFIG, WeeklyReport, TrendSnapshot, WorkoutData, RecoveryScore, CardioSession } from "../types";
 
 export interface STAContext {
   cycle: TrainingCycle;
@@ -520,7 +520,8 @@ ${e1rmLines ? `Estimated 1RMs:\n${e1rmLines}` : ''}`;
     question: string,
     recentWorkouts: WorkoutSession[],
     dietData: DietData | null,
-    staContext?: STAContext
+    staContext?: STAContext,
+    aiContext?: string
   ): Promise<string> {
     const workoutSummary = this.buildWorkoutSummary(recentWorkouts);
     const staSection = this.buildSTAContext(staContext);
@@ -550,6 +551,7 @@ ${e1rmLines ? `Estimated 1RMs:\n${e1rmLines}` : ''}`;
 ${bodyStats}
 ${dietSummary}
 ${staSection}
+${aiContext ? `\n## Long-term Trends:\n${aiContext}` : ''}
 
 Recent Workouts:
 ${workoutSummary}
@@ -746,7 +748,8 @@ ${workoutSummary}`;
     program: TrainingProgram,
     completedSession: WorkoutSession,
     plannedDay: ProgramDay,
-    staContext: STAContext
+    staContext: STAContext,
+    aiContext?: string
   ): Promise<{ updatedProgram: TrainingProgram; summary: string }> {
     const comparisonLines = plannedDay.exercises.map(planned => {
       const actual = completedSession.exercises.find(
@@ -776,6 +779,7 @@ Week ${program.currentWeek} of ${program.totalWeeks} | ${remainingWeeks} weeks r
 ${comparisonLines}
 
 ${staSection}
+${aiContext ? `\n## Long-term Trends:\n${aiContext}` : ''}
 
 ## Iteration Rules:
 1. **Minor adjust (default)**: If actual is close to plan, apply standard double progression to the NEXT session that uses these exercises. Increase weight if all sets hit top of rep range at RPE<=9.
@@ -1065,6 +1069,126 @@ Include a brief 1-2 sentence summary of what you changed.`;
       return JSON.parse(response.text || '{}');
     } catch (e) {
       console.error("Food image analysis failed:", e);
+      return null;
+    }
+  }
+
+  async generateWeeklyReport(
+    workoutData: WorkoutData,
+    dietData: DietData,
+    trendSnapshot: TrendSnapshot,
+    aiContext: string
+  ): Promise<WeeklyReport | null> {
+    const now = new Date();
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - 7);
+
+    const weekSessions = workoutData.sessions.filter(s => s.timestamp > weekStart.getTime());
+    const weekCardio = (workoutData.cardioSessions || []).filter(s => s.timestamp > weekStart.getTime());
+    const weekRecovery = (workoutData.recoveryScores || []).filter(s => s.timestamp > weekStart.getTime());
+
+    const totalSets = weekSessions.reduce((s, sess) => s + sess.totalSets, 0);
+    const totalVolume = weekSessions.reduce((s, sess) =>
+      s + sess.exercises.reduce((ev, ex) => ev + ex.sets.reduce((sv, set) => sv + (set.weight * set.reps), 0), 0), 0);
+    const allRPEs = weekSessions.flatMap(s => s.exercises.flatMap(e => e.sets.filter(s => s.rpe).map(s => s.rpe!)));
+    const avgRPE = allRPEs.length > 0 ? Math.round((allRPEs.reduce((a,b) => a+b, 0) / allRPEs.length) * 10) / 10 : 0;
+    const newPRs = weekSessions.reduce((s, sess) => s + sess.exercises.filter(e => e.isPR).length, 0);
+
+    const cardioMinutes = weekCardio.reduce((s, c) => s + c.durationMinutes, 0);
+    const avgReadiness = weekRecovery.length > 0
+      ? Math.round((weekRecovery.reduce((s, r) => s + r.overallReadiness, 0) / weekRecovery.length) * 10) / 10 : 0;
+    const avgSleepHours = weekRecovery.length > 0
+      ? Math.round((weekRecovery.reduce((s, r) => s + r.sleepHours, 0) / weekRecovery.length) * 10) / 10 : 0;
+
+    // Diet compliance
+    const dailyLogs = dietData.nutritionData?.dailyLogs || [];
+    const weekLogs = dailyLogs.filter(l => {
+      const d = new Date(l.date);
+      return d >= weekStart && d <= now;
+    });
+    const targetCal = dietData.currentPlan?.totalCalories || 0;
+    const targetPro = dietData.currentPlan?.totalProtein || 0;
+    const avgCalories = weekLogs.length > 0
+      ? Math.round(weekLogs.reduce((s, l) => s + l.entries.reduce((es, e) => es + e.calories * (e.servings || 1), 0), 0) / weekLogs.length) : 0;
+    const avgProtein = weekLogs.length > 0
+      ? Math.round(weekLogs.reduce((s, l) => s + l.entries.reduce((es, e) => es + e.protein * (e.servings || 1), 0), 0) / weekLogs.length * 10) / 10 : 0;
+    const complianceDays = weekLogs.filter(l => {
+      const dayCal = l.entries.reduce((s, e) => s + e.calories * (e.servings || 1), 0);
+      return targetCal > 0 && Math.abs(dayCal - targetCal) / targetCal <= 0.1;
+    }).length;
+    const compliancePct = weekLogs.length > 0 ? Math.round((complianceDays / weekLogs.length) * 100) : 0;
+
+    // Weight
+    const bodyLogs = dietData.bodyLogs || [];
+    const weekBodyLogs = bodyLogs.filter(l => new Date(l.date) >= weekStart);
+    const weightStart = weekBodyLogs.length > 0 ? weekBodyLogs[0].weight : undefined;
+    const weightEnd = weekBodyLogs.length > 1 ? weekBodyLogs[weekBodyLogs.length - 1].weight : weightStart;
+
+    const prompt = `# Weekly Training Report Analysis
+
+You are analyzing a week of training data for a bodybuilding/fitness program.
+
+## This Week's Stats:
+- Training sessions: ${weekSessions.length} (${totalSets} total sets, ${totalVolume} total volume)
+- Avg RPE: ${avgRPE}, New PRs: ${newPRs}
+- Cardio: ${weekCardio.length} sessions, ${cardioMinutes} total minutes
+- Avg Readiness: ${avgReadiness}/10, Avg Sleep: ${avgSleepHours}h
+- Diet: ${avgCalories} avg kcal (target: ${targetCal}), ${avgProtein}g avg protein (target: ${targetPro}g)
+- Diet compliance: ${compliancePct}%
+${weightStart != null ? `- Weight: ${weightStart}kg → ${weightEnd}kg (${weightEnd && weightStart ? (weightEnd - weightStart > 0 ? '+' : '') + (weightEnd - weightStart).toFixed(1) : 'N/A'}kg)` : ''}
+
+## Trend Context:
+${aiContext}
+
+## Training Program:
+${workoutData.trainingProgram ? `"${workoutData.trainingProgram.name}", Phase: ${workoutData.trainingProgram.phase}, Week ${workoutData.trainingProgram.currentWeek}/${workoutData.trainingProgram.totalWeeks}` : 'No structured program'}
+
+## Instructions:
+1. Provide a concise summary (2-3 sentences) of the week
+2. List 3-5 specific, actionable recommendations for next week
+3. Note any auto-adjustments that should be made (diet changes, volume changes, cardio changes)
+
+Return JSON:
+{
+  "summary": "...",
+  "recommendations": ["...", "..."],
+  "autoAdjustments": ["..."]
+}`;
+
+    try {
+      const response = await this.getAI().models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: { parts: [{ text: prompt }] },
+        config: { responseMimeType: 'application/json' }
+      });
+      const data = JSON.parse(response.text || '{}');
+
+      return {
+        id: `wr_${Date.now()}`,
+        weekStartDate: weekStart.toISOString().split('T')[0],
+        weekEndDate: now.toISOString().split('T')[0],
+        timestamp: Date.now(),
+        totalSessions: weekSessions.length,
+        totalSets,
+        totalVolume,
+        newPRs,
+        avgRPE,
+        cardioMinutes,
+        cardioSessions: weekCardio.length,
+        avgCalories,
+        avgProtein,
+        dietCompliancePct: compliancePct,
+        weightStart,
+        weightEnd,
+        weightDelta: weightStart && weightEnd ? Math.round((weightEnd - weightStart) * 10) / 10 : undefined,
+        avgReadiness,
+        avgSleepHours,
+        aiSummary: data.summary || '',
+        aiRecommendations: data.recommendations || [],
+        autoAdjustments: data.autoAdjustments || [],
+      };
+    } catch (e) {
+      console.error('Weekly report generation failed:', e);
       return null;
     }
   }

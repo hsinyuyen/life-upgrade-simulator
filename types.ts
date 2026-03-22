@@ -404,6 +404,91 @@ export interface IterationLog {
   dayNumber: number;
 }
 
+// ===== Cardio Types =====
+
+export type CardioType = 'LISS' | 'HIIT' | 'Conditioning' | 'Sport';
+
+export interface CardioSession {
+  id: string;
+  date: string;
+  timestamp: number;
+  type: CardioType;
+  activity: string; // e.g. "Treadmill", "Cycling", "Jump Rope"
+  durationMinutes: number;
+  caloriesBurned?: number;
+  avgHeartRate?: number;
+  maxHeartRate?: number;
+  distanceKm?: number;
+  notes?: string;
+  rpe?: number; // 1-10
+}
+
+// ===== Recovery Types =====
+
+export interface RecoveryScore {
+  id: string;
+  date: string;
+  timestamp: number;
+  sleepHours: number;
+  sleepQuality: number; // 1-10
+  muscleSoreness: number; // 1-10 (10 = very sore)
+  energyLevel: number; // 1-10
+  stressLevel: number; // 1-10 (10 = very stressed)
+  overallReadiness: number; // computed: 1-10
+  notes?: string;
+}
+
+// ===== Weekly Report Types =====
+
+export interface WeeklyReport {
+  id: string;
+  weekStartDate: string;
+  weekEndDate: string;
+  timestamp: number;
+  // Training
+  totalSessions: number;
+  totalSets: number;
+  totalVolume: number;
+  newPRs: number;
+  avgRPE: number;
+  cardioMinutes: number;
+  cardioSessions: number;
+  // Diet
+  avgCalories: number;
+  avgProtein: number;
+  dietCompliancePct: number; // % days within ±10% of target
+  // Body
+  weightStart?: number;
+  weightEnd?: number;
+  weightDelta?: number;
+  // Recovery
+  avgReadiness: number;
+  avgSleepHours: number;
+  // AI
+  aiSummary: string;
+  aiRecommendations: string[];
+  autoAdjustments?: string[];
+}
+
+// ===== Trend Snapshot =====
+
+export interface TrendSnapshot {
+  // e1RM trends (last 4 weeks for top exercises)
+  e1rmTrends: { exercise: string; values: { week: string; e1rm: number }[] }[];
+  // Volume trends
+  weeklyVolume: { week: string; totalSets: number; totalVolume: number }[];
+  // Body trends
+  weightTrend: { date: string; weight: number }[];
+  bodyFatTrend: { date: string; bodyFat: number }[];
+  // Diet trends
+  caloriesTrend: { week: string; avgCalories: number; target: number }[];
+  proteinTrend: { week: string; avgProtein: number; target: number }[];
+  // Recovery
+  readinessTrend: { week: string; avgReadiness: number }[];
+  // Cardio
+  cardioTrend: { week: string; totalMinutes: number; sessions: number }[];
+}
+
 export interface WorkoutData {
   sessions: WorkoutSession[];
   exercisePRs: ExercisePR;
@@ -413,6 +498,9 @@ export interface WorkoutData {
   exerciseE1RMs?: Record<string, E1RMEntry[]>;
   trainingProgram?: TrainingProgram;
   iterationLogs?: IterationLog[];
+  cardioSessions?: CardioSession[];
+  recoveryScores?: RecoveryScore[];
+  weeklyReports?: WeeklyReport[];
 }
 
 // ===== Story Quest Types =====

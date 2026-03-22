@@ -2,6 +2,8 @@ import {
   ExerciseType, ExerciseSet, WorkoutSession, TrainingPhase,
   BodyPart, SavedExercise, DeloadType,
   EXERCISE_TIER_CONFIG, PHASE_CONFIG,
+  WorkoutData, DietData, TrendSnapshot, RecoveryScore,
+  CardioSession, WeeklyReport,
 } from '../types';
 
 export type ProgressionAction = 'INCREASE_WEIGHT' | 'INCREASE_REPS' | 'MAINTAIN' | 'DELOAD';
@@ -241,6 +243,277 @@ export class TrainingEngine {
       }
     }
     return null;
+  }
+
+  // ===== Helper =====
+
+  /** Returns ISO week string like "2026-W12" for a given timestamp. */
+  private getISOWeekString(timestamp: number): string {
+    const d = new Date(timestamp);
+    d.setUTCHours(0, 0, 0, 0);
+    // Thursday in current week decides the year
+    d.setUTCDate(d.getUTCDate() + 3 - ((d.getUTCDay() + 6) % 7));
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+  }
+
+  /** Parse "YYYY-MM-DD" to a timestamp (UTC midnight). */
+  private parseDateStr(dateStr: string): number {
+    return new Date(dateStr + 'T00:00:00Z').getTime();
+  }
+
+  // ===== New Methods =====
+
+  /**
+   * Compute recovery readiness from subjective metrics.
+   * Formula: (sleepQuality*0.3) + (energyLevel*0.25) + ((10-muscleSoreness)*0.25) + ((10-stressLevel)*0.2)
+   * Clamped 1-10, rounded to 1 decimal.
+   */
+  computeRecoveryReadiness(score: Omit<RecoveryScore, 'id' | 'overallReadiness'>): number {
+    const raw =
+      score.sleepQuality * 0.3 +
+      score.energyLevel * 0.25 +
+      (10 - score.muscleSoreness) * 0.25 +
+      (10 - score.stressLevel) * 0.2;
+    return Math.round(Math.min(10, Math.max(1, raw)) * 10) / 10;
+  }
+
+  /**
+   * Build a TrendSnapshot aggregating workout and diet data for dashboards / AI.
+   */
+  buildTrendSnapshot(workoutData: WorkoutData, dietData: DietData): TrendSnapshot {
+    const now = Date.now();
+    const fourWeeksAgo = now - 28 * 86400000;
+    const eightWeeksAgo = now - 56 * 86400000;
+
+    // --- e1rmTrends: top 5 exercises by frequency, weekly best e1RM over last 4 weeks ---
+    const exerciseFreq = new Map<string, number>();
+    const exerciseWeeklyE1RM = new Map<string, Map<string, number>>();
+    for (const session of workoutData.sessions) {
+      if (session.timestamp < fourWeeksAgo) continue;
+      const week = this.getISOWeekString(session.timestamp);
+      for (const ex of session.exercises) {
+        exerciseFreq.set(ex.name, (exerciseFreq.get(ex.name) || 0) + 1);
+        const best = this.getBestE1RM(ex.sets);
+        if (best > 0) {
+          if (!exerciseWeeklyE1RM.has(ex.name)) exerciseWeeklyE1RM.set(ex.name, new Map());
+          const weekMap = exerciseWeeklyE1RM.get(ex.name)!;
+          weekMap.set(week, Math.max(weekMap.get(week) || 0, best));
+        }
+      }
+    }
+    const top5Exercises = [...exerciseFreq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name]) => name);
+
+    const e1rmTrends = top5Exercises.map(exercise => {
+      const weekMap = exerciseWeeklyE1RM.get(exercise) || new Map();
+      const values = [...weekMap.entries()]
+        .map(([week, e1rm]) => ({ week, e1rm }))
+        .sort((a, b) => a.week.localeCompare(b.week));
+      return { exercise, values };
+    });
+
+    // --- weeklyVolume: last 4 weeks ---
+    const volumeByWeek = new Map<string, { totalSets: number; totalVolume: number }>();
+    for (const session of workoutData.sessions) {
+      if (session.timestamp < fourWeeksAgo) continue;
+      const week = this.getISOWeekString(session.timestamp);
+      const entry = volumeByWeek.get(week) || { totalSets: 0, totalVolume: 0 };
+      for (const ex of session.exercises) {
+        entry.totalSets += ex.sets.length;
+        for (const s of ex.sets) {
+          entry.totalVolume += s.weight * s.reps;
+        }
+      }
+      volumeByWeek.set(week, entry);
+    }
+    const weeklyVolume = [...volumeByWeek.entries()]
+      .map(([week, v]) => ({ week, ...v }))
+      .sort((a, b) => a.week.localeCompare(b.week));
+
+    // --- weightTrend: last 8 entries from bodyLogs ---
+    const weightTrend = dietData.bodyLogs
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-8)
+      .map(l => ({ date: l.date, weight: l.weight }));
+
+    // --- bodyFatTrend: last 8 entries where bodyFat exists ---
+    const bodyFatTrend = dietData.bodyLogs
+      .filter(l => l.bodyFat != null)
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-8)
+      .map(l => ({ date: l.date, bodyFat: l.bodyFat! }));
+
+    // --- caloriesTrend & proteinTrend: weekly avg vs target, last 4 weeks ---
+    const targetCalories = dietData.currentPlan?.totalCalories || 0;
+    const targetProtein = dietData.currentPlan?.totalProtein || 0;
+    const dailyLogs = dietData.nutritionData?.dailyLogs || [];
+
+    const calByWeek = new Map<string, number[]>();
+    const proByWeek = new Map<string, number[]>();
+    for (const log of dailyLogs) {
+      const ts = this.parseDateStr(log.date);
+      if (ts < fourWeeksAgo) continue;
+      const week = this.getISOWeekString(ts);
+      if (!calByWeek.has(week)) calByWeek.set(week, []);
+      if (!proByWeek.has(week)) proByWeek.set(week, []);
+      calByWeek.get(week)!.push(log.totalCalories);
+      proByWeek.get(week)!.push(log.totalProtein);
+    }
+
+    const caloriesTrend = [...calByWeek.entries()]
+      .map(([week, vals]) => ({
+        week,
+        avgCalories: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length),
+        target: targetCalories,
+      }))
+      .sort((a, b) => a.week.localeCompare(b.week));
+
+    const proteinTrend = [...proByWeek.entries()]
+      .map(([week, vals]) => ({
+        week,
+        avgProtein: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length),
+        target: targetProtein,
+      }))
+      .sort((a, b) => a.week.localeCompare(b.week));
+
+    // --- readinessTrend: weekly avg readiness ---
+    const readByWeek = new Map<string, number[]>();
+    for (const rs of workoutData.recoveryScores || []) {
+      if (rs.timestamp < fourWeeksAgo) continue;
+      const week = this.getISOWeekString(rs.timestamp);
+      if (!readByWeek.has(week)) readByWeek.set(week, []);
+      readByWeek.get(week)!.push(rs.overallReadiness);
+    }
+    const readinessTrend = [...readByWeek.entries()]
+      .map(([week, vals]) => ({
+        week,
+        avgReadiness: Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10,
+      }))
+      .sort((a, b) => a.week.localeCompare(b.week));
+
+    // --- cardioTrend: weekly total minutes and count ---
+    const cardioByWeek = new Map<string, { totalMinutes: number; sessions: number }>();
+    for (const cs of workoutData.cardioSessions || []) {
+      if (cs.timestamp < fourWeeksAgo) continue;
+      const week = this.getISOWeekString(cs.timestamp);
+      const entry = cardioByWeek.get(week) || { totalMinutes: 0, sessions: 0 };
+      entry.totalMinutes += cs.durationMinutes;
+      entry.sessions += 1;
+      cardioByWeek.set(week, entry);
+    }
+    const cardioTrend = [...cardioByWeek.entries()]
+      .map(([week, v]) => ({ week, ...v }))
+      .sort((a, b) => a.week.localeCompare(b.week));
+
+    return {
+      e1rmTrends,
+      weeklyVolume,
+      weightTrend,
+      bodyFatTrend,
+      caloriesTrend,
+      proteinTrend,
+      readinessTrend,
+      cardioTrend,
+    };
+  }
+
+  /**
+   * Get diet compliance stats for the last N days.
+   * Compliance = % of days where total calories are within ±10% of target.
+   */
+  getDietCompliance(
+    dietData: DietData,
+    days: number = 7
+  ): { compliancePct: number; avgCalories: number; avgProtein: number; daysTracked: number } {
+    const targetCalories = dietData.currentPlan?.totalCalories || 0;
+    const dailyLogs = dietData.nutritionData?.dailyLogs || [];
+    const cutoffDate = new Date(Date.now() - days * 86400000)
+      .toISOString()
+      .slice(0, 10);
+
+    const recentLogs = dailyLogs.filter(l => l.date >= cutoffDate);
+    if (recentLogs.length === 0) {
+      return { compliancePct: 0, avgCalories: 0, avgProtein: 0, daysTracked: 0 };
+    }
+
+    let compliantDays = 0;
+    let totalCal = 0;
+    let totalPro = 0;
+    for (const log of recentLogs) {
+      totalCal += log.totalCalories;
+      totalPro += log.totalProtein;
+      if (targetCalories > 0) {
+        const deviation = Math.abs(log.totalCalories - targetCalories) / targetCalories;
+        if (deviation <= 0.1) compliantDays++;
+      }
+    }
+
+    return {
+      compliancePct: targetCalories > 0
+        ? Math.round((compliantDays / recentLogs.length) * 100)
+        : 0,
+      avgCalories: Math.round(totalCal / recentLogs.length),
+      avgProtein: Math.round(totalPro / recentLogs.length),
+      daysTracked: recentLogs.length,
+    };
+  }
+
+  /**
+   * Build a concise text context (<500 chars) for AI prompts summarizing recent trends.
+   */
+  buildAIContext(workoutData: WorkoutData, dietData: DietData): string {
+    const snap = this.buildTrendSnapshot(workoutData, dietData);
+    const compliance = this.getDietCompliance(dietData, 7);
+    const parts: string[] = [];
+
+    // e1RM direction
+    for (const t of snap.e1rmTrends.slice(0, 3)) {
+      if (t.values.length >= 2) {
+        const last = t.values[t.values.length - 1].e1rm;
+        const prev = t.values[t.values.length - 2].e1rm;
+        const dir = last > prev ? 'up' : last < prev ? 'down' : 'stall';
+        parts.push(`${t.exercise} e1RM:${dir}`);
+      }
+    }
+
+    // Volume trend
+    if (snap.weeklyVolume.length >= 2) {
+      const last = snap.weeklyVolume[snap.weeklyVolume.length - 1].totalVolume;
+      const prev = snap.weeklyVolume[snap.weeklyVolume.length - 2].totalVolume;
+      const dir = last > prev ? 'up' : last < prev ? 'down' : 'flat';
+      parts.push(`Vol:${dir}`);
+    }
+
+    // Weight trend
+    if (snap.weightTrend.length >= 2) {
+      const last = snap.weightTrend[snap.weightTrend.length - 1].weight;
+      const first = snap.weightTrend[0].weight;
+      const delta = Math.round((last - first) * 10) / 10;
+      parts.push(`Wt:${delta > 0 ? '+' : ''}${delta}kg`);
+    }
+
+    // Diet compliance
+    parts.push(`Diet:${compliance.compliancePct}%comply`);
+
+    // Avg readiness
+    if (snap.readinessTrend.length > 0) {
+      const avg = snap.readinessTrend[snap.readinessTrend.length - 1].avgReadiness;
+      parts.push(`Ready:${avg}/10`);
+    }
+
+    // Cardio
+    if (snap.cardioTrend.length > 0) {
+      const last = snap.cardioTrend[snap.cardioTrend.length - 1];
+      parts.push(`Cardio:${last.totalMinutes}min/${last.sessions}x`);
+    }
+
+    return parts.join('; ').slice(0, 500);
   }
 }
 
