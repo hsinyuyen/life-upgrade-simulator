@@ -1131,6 +1131,32 @@ const App: React.FC = () => {
       // Check story milestone for Health
       checkStoryMilestone(Category.HEALTH, oldHealthXP, newStats.healthXP, storyState, newStats.level);
 
+      // Auto-adjust diet plan if training phase changed or significant fatigue shift
+      if (newWorkoutData && dietData.currentPlan && dietData.profile) {
+        const tp = newWorkoutData.trainingProgram;
+        const oldTp = workoutData.trainingProgram;
+        const phaseChanged = tp && oldTp && tp.phase !== oldTp.phase;
+        const fatigueHigh = newWorkoutData.currentCycle && newWorkoutData.currentCycle.accumulatedFatigue >= 7;
+        const oldFatigueHigh = workoutData.currentCycle && workoutData.currentCycle.accumulatedFatigue >= 7;
+        const fatigueShifted = fatigueHigh !== oldFatigueHigh;
+
+        if (phaseChanged || fatigueShifted) {
+          geminiService.generateDietPlan(dietData.profile, newWorkoutData).then(newPlan => {
+            if (newPlan) {
+              const updatedDiet = {
+                ...dietData,
+                currentPlan: newPlan,
+                planHistory: dietData.currentPlan
+                  ? [...dietData.planHistory, dietData.currentPlan]
+                  : dietData.planHistory,
+              };
+              setDietData(updatedDiet);
+              syncToFirebase(newStats, newActivities, undefined, updatedDiet, newWorkoutData);
+            }
+          }).catch(err => console.error('Auto diet adjustment failed:', err));
+        }
+      }
+
       return newStats;
     });
   };

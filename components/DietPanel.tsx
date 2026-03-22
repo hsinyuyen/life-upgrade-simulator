@@ -43,6 +43,7 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
   const [bodyLogs, setBodyLogs] = useState<BodyLog[]>(dietData.bodyLogs || []);
   const [currentPlan, setCurrentPlan] = useState<DietPlan | null>(dietData.currentPlan || null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [dayMode, setDayMode] = useState<'training' | 'rest'>('training');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<{ analysis: string; suggestedChanges: string[] } | null>(null);
   const [expandedRecipe, setExpandedRecipe] = useState<string | null>(null);
@@ -790,31 +791,62 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
         {/* ===== PLAN TAB ===== */}
         {activeTab === 'plan' && (
           <div className="space-y-4">
-            {currentPlan ? (
+            {currentPlan ? (() => {
+              const isRestMode = dayMode === 'rest' && currentPlan.restDayPlan;
+              const activePlan = isRestMode ? currentPlan.restDayPlan! : currentPlan;
+              return (
               <>
+                {/* Training Day / Rest Day Toggle */}
+                {currentPlan.restDayPlan && (
+                  <div className="flex bg-slate-900/60 border border-white/10 rounded-xl p-1 gap-1">
+                    <button
+                      onClick={() => setDayMode('training')}
+                      className={`flex-1 py-2 rounded-lg text-xs font-game tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                        dayMode === 'training'
+                          ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Flame size={12} /> TRAINING DAY
+                    </button>
+                    <button
+                      onClick={() => setDayMode('rest')}
+                      className={`flex-1 py-2 rounded-lg text-xs font-game tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                        dayMode === 'rest'
+                          ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Heart size={12} /> REST DAY
+                    </button>
+                  </div>
+                )}
+
                 {/* Macro Summary */}
                 <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-game text-base text-emerald-400">DAILY MACROS</h3>
+                    <h3 className="font-game text-base text-emerald-400">
+                      {isRestMode ? 'REST DAY MACROS' : 'TRAINING DAY MACROS'}
+                    </h3>
                     <span className="text-xs text-slate-400">
                       {new Date(currentPlan.createdAt).toLocaleDateString()}
                     </span>
                   </div>
                   <div className="grid grid-cols-4 gap-2">
                     <div className="bg-slate-950 rounded-xl p-3 text-center">
-                      <div className="text-lg font-bold text-orange-400">{currentPlan.totalCalories}</div>
+                      <div className="text-lg font-bold text-orange-400">{activePlan.totalCalories}</div>
                       <div className="text-xs text-slate-500 font-game">KCAL</div>
                     </div>
                     <div className="bg-slate-950 rounded-xl p-3 text-center">
-                      <div className="text-lg font-bold text-red-400">{currentPlan.totalProtein}g</div>
+                      <div className="text-lg font-bold text-red-400">{activePlan.totalProtein}g</div>
                       <div className="text-xs text-slate-500 font-game">PROTEIN</div>
                     </div>
                     <div className="bg-slate-950 rounded-xl p-3 text-center">
-                      <div className="text-lg font-bold text-blue-400">{currentPlan.totalCarbs}g</div>
+                      <div className="text-lg font-bold text-blue-400">{activePlan.totalCarbs}g</div>
                       <div className="text-xs text-slate-500 font-game">CARBS</div>
                     </div>
                     <div className="bg-slate-950 rounded-xl p-3 text-center">
-                      <div className="text-lg font-bold text-yellow-400">{currentPlan.totalFat}g</div>
+                      <div className="text-lg font-bold text-yellow-400">{activePlan.totalFat}g</div>
                       <div className="text-xs text-slate-500 font-game">FAT</div>
                     </div>
                   </div>
@@ -827,7 +859,7 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
 
                 {/* Recipes */}
                 {(['breakfast', 'lunch', 'dinner', 'snack'] as const).map(mealType => {
-                  const meals = currentPlan.recipes.filter(r => r.mealType === mealType);
+                  const meals = activePlan.recipes.filter(r => r.mealType === mealType);
                   if (meals.length === 0) return null;
                   return (
                     <div key={mealType} className="space-y-2">
@@ -914,7 +946,8 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
                   REGENERATE PLAN
                 </button>
               </>
-            ) : (
+              );
+            })() : (
               <div className="text-center py-16 text-slate-500 space-y-4">
                 <Utensils size={48} className="mx-auto opacity-30" />
                 <p className="font-game text-xl">NO DIET PLAN YET</p>

@@ -322,19 +322,31 @@ Background: Simple dark gradient background. Square format.`;
     - Recomp: near maintenance, protein 2.0-2.4g/kg, cycle carbs around training days
     - Consider training volume and fatigue when setting carb intake.` : ''}
 
-    Create exactly 4-6 recipes (covering breakfast, lunch, dinner, and 1-2 snacks).
-    Also generate a consolidated grocery list from all recipes.
-    Calculate appropriate macros for the goal.
+    Create TWO versions of the diet plan:
+    1. **Training Day** — higher carbs and calories to fuel workouts and recovery
+    2. **Rest Day** — lower carbs and slightly fewer calories, maintain protein
+
+    Each version should have 4-6 recipes (breakfast, lunch, dinner, 1-2 snacks).
+    Also generate a consolidated grocery list covering both versions.
     Include an "aiNotes" field with brief dietary advice${workoutData?.trainingProgram ? ' that references how the diet supports the current training phase' : ''}.
 
     IMPORTANT: Return valid JSON matching this exact structure:
     {
-      "recipes": [{ "name": "...", "mealType": "breakfast|lunch|dinner|snack", "ingredients": ["item1", "item2"], "instructions": "step by step...", "calories": 500, "protein": 30, "carbs": 50, "fat": 15, "servings": 1 }],
+      "trainingDay": {
+        "recipes": [{ "name": "...", "mealType": "breakfast|lunch|dinner|snack", "ingredients": ["item1", "item2"], "instructions": "step by step...", "calories": 500, "protein": 30, "carbs": 50, "fat": 15, "servings": 1 }],
+        "totalCalories": 2500,
+        "totalProtein": 180,
+        "totalCarbs": 280,
+        "totalFat": 70
+      },
+      "restDay": {
+        "recipes": [{ "name": "...", "mealType": "breakfast|lunch|dinner|snack", "ingredients": ["item1", "item2"], "instructions": "step by step...", "calories": 400, "protein": 30, "carbs": 30, "fat": 15, "servings": 1 }],
+        "totalCalories": 2000,
+        "totalProtein": 180,
+        "totalCarbs": 180,
+        "totalFat": 65
+      },
       "groceryList": [{ "name": "Chicken Breast", "amount": "500g", "category": "Protein" }],
-      "totalCalories": 2200,
-      "totalProtein": 160,
-      "totalCarbs": 220,
-      "totalFat": 70,
       "aiNotes": "Brief dietary advice..."
     }`;
 
@@ -348,21 +360,40 @@ Background: Simple dark gradient background. Square format.`;
       });
 
       const data = JSON.parse(response.text || '{}');
-      return {
+      const parseRecipes = (recipes: any[]) => (recipes || []).map((r: any, i: number) => ({
+        ...r,
+        id: `recipe-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
+        servings: r.servings || 1,
+      }));
+
+      // Support both new (trainingDay/restDay) and legacy (flat) formats
+      const td = data.trainingDay || data;
+      const rd = data.restDay;
+
+      const plan: DietPlan = {
         id: Math.random().toString(36).substr(2, 9),
         createdAt: Date.now(),
-        recipes: (data.recipes || []).map((r: any, i: number) => ({
-          ...r,
-          id: `recipe-${Date.now()}-${i}`,
-          servings: r.servings || 1,
-        })),
-        groceryList: data.groceryList || [],
-        totalCalories: data.totalCalories || 0,
-        totalProtein: data.totalProtein || 0,
-        totalCarbs: data.totalCarbs || 0,
-        totalFat: data.totalFat || 0,
-        aiNotes: data.aiNotes || '',
+        recipes: parseRecipes(td.recipes),
+        groceryList: data.groceryList || td.groceryList || [],
+        totalCalories: td.totalCalories || 0,
+        totalProtein: td.totalProtein || 0,
+        totalCarbs: td.totalCarbs || 0,
+        totalFat: td.totalFat || 0,
+        aiNotes: data.aiNotes || td.aiNotes || '',
       };
+
+      if (rd) {
+        plan.restDayPlan = {
+          recipes: parseRecipes(rd.recipes),
+          groceryList: data.groceryList || rd.groceryList || [],
+          totalCalories: rd.totalCalories || 0,
+          totalProtein: rd.totalProtein || 0,
+          totalCarbs: rd.totalCarbs || 0,
+          totalFat: rd.totalFat || 0,
+        };
+      }
+
+      return plan;
     } catch (e) {
       console.error("Diet plan generation failed:", e);
       return null;

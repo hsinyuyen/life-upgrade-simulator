@@ -160,6 +160,15 @@ export interface Recipe {
   adjustedServings?: number;
 }
 
+export interface DietDayPlan {
+  recipes: Recipe[];
+  groceryList: GroceryItem[];
+  totalCalories: number;
+  totalProtein: number;
+  totalCarbs: number;
+  totalFat: number;
+}
+
 export interface DietPlan {
   id: string;
   createdAt: number;
@@ -170,6 +179,7 @@ export interface DietPlan {
   totalCarbs: number;
   totalFat: number;
   aiNotes?: string;
+  restDayPlan?: DietDayPlan;
 }
 
 export interface DietData {
