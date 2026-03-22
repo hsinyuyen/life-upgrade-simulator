@@ -1695,7 +1695,7 @@ const App: React.FC = () => {
 
         {/* Collapsable Sidebar */}
         <div className={`fixed top-0 left-0 h-full w-64 bg-slate-900 z-[560] shadow-2xl transition-transform duration-300 ease-in-out transform ${showSidebar ? 'translate-x-0' : '-translate-x-full'}`}>
-          <div className="p-6 flex flex-col h-full" style={{ paddingTop: 'max(env(safe-area-inset-top), 36px)' }}>
+          <div className="p-6 flex flex-col h-full" style={{ paddingTop: 'max(env(safe-area-inset-top), 48px)' }}>
             <div className="flex justify-between items-center mb-10">
               <h2 className="font-game text-xl text-white">MENU</h2>
               <button onClick={() => setShowSidebar(false)} className="text-white/60 hover:text-white">
@@ -1771,7 +1771,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Top Bar */}
-        <div className="flex justify-between items-center p-4 fixed top-0 left-0 right-0 max-w-md mx-auto z-50" style={{ paddingTop: 'max(env(safe-area-inset-top), 36px)' }}>
+        <div className="flex justify-between items-center p-4 fixed top-0 left-0 right-0 max-w-md mx-auto z-50" style={{ paddingTop: 'max(env(safe-area-inset-top), 48px)' }}>
           <div className="flex items-center gap-2">
             <button 
               onClick={() => setShowSidebar(true)}
@@ -1830,7 +1830,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Main Title */}
-        <div className="text-center px-4 flex flex-col items-center chromatic-aberration" style={{ paddingTop: 'max(env(safe-area-inset-top), 36px)' }}>
+        <div className="text-center px-4 flex flex-col items-center chromatic-aberration" style={{ paddingTop: 'max(env(safe-area-inset-top), 48px)' }}>
           <img src={lifeLogo} alt="Life Upgrade Simulator" className="h-40 w-auto drop-shadow-md" />
           <div className="-mt-4 inline-block bg-white/20 backdrop-blur-sm border border-white/30 px-4 py-1 rounded-full relative z-10">
             <span className="font-game text-sm text-white tracking-widest">
