@@ -912,14 +912,16 @@ Include a brief 1-2 sentence summary of what you changed.`;
         try {
           const parsed = JSON.parse(jsonMatch2[1]);
           const normalized = this.normalizeProgram(parsed);
-          // Merge completed status from original program to prevent AI from losing it
+          // CRITICAL: Force-merge completed status from original program
+          // Use both index-based AND label-based matching for robustness
           const mergedWeeks = normalized.weeks.map((nw, wi) => {
-            const origWeek = program.weeks[wi];
+            const origWeek = program.weeks[wi] || program.weeks.find(ow => ow.weekNumber === nw.weekNumber);
             if (!origWeek) return nw;
             return {
               ...nw,
               days: nw.days.map((nd, di) => {
-                const origDay = origWeek.days[di];
+                // Try index first, then label match
+                const origDay = origWeek.days[di] || origWeek.days.find(od => od.label === nd.label);
                 if (origDay?.completed) {
                   return { ...nd, completed: true, completedSessionId: origDay.completedSessionId, completedAt: origDay.completedAt };
                 }
@@ -927,16 +929,39 @@ Include a brief 1-2 sentence summary of what you changed.`;
               }),
             };
           });
+
+          // Also scan ALL original weeks for any completed days that may have been missed
+          for (const origWeek of program.weeks) {
+            for (const origDay of origWeek.days) {
+              if (!origDay.completed) continue;
+              const targetWeek = mergedWeeks.find(mw => mw.weekNumber === origWeek.weekNumber);
+              if (!targetWeek) continue;
+              const targetDay = targetWeek.days.find(md => md.dayNumber === origDay.dayNumber || md.label === origDay.label);
+              if (targetDay && !targetDay.completed) {
+                targetDay.completed = true;
+                targetDay.completedSessionId = origDay.completedSessionId;
+                targetDay.completedAt = origDay.completedAt;
+              }
+            }
+          }
+
           // Recalculate current position from merged data
           let calcWeek = 1;
           let calcDay = 1;
+          let foundIncomplete = false;
           for (const w of mergedWeeks) {
             const uncompletedIdx = w.days.findIndex(d => !d.completed);
             if (uncompletedIdx >= 0) {
               calcWeek = w.weekNumber;
               calcDay = uncompletedIdx + 1;
+              foundIncomplete = true;
               break;
             }
+          }
+          if (!foundIncomplete) {
+            // All days completed, stay at last week
+            calcWeek = mergedWeeks.length;
+            calcDay = mergedWeeks[mergedWeeks.length - 1]?.days.length || 1;
           }
           updatedProgram = {
             ...normalized,

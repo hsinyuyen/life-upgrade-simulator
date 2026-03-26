@@ -776,6 +776,56 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
 
             {/* Iteration Notification - moved inline, also shown as floating */}
 
+            {/* Program Progress & Manual Mark Complete */}
+            {trainingProgram && (
+              <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-game text-sm text-violet-400">{trainingProgram.name}</h3>
+                  <span className="text-xs text-slate-500">
+                    Week {trainingProgram.currentWeek}/{trainingProgram.totalWeeks}
+                  </span>
+                </div>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {trainingProgram.weeks.map(week =>
+                    week.days.map(day => (
+                      <div key={`w${week.weekNumber}d${day.dayNumber}`} className="flex items-center justify-between text-xs">
+                        <span className={day.completed ? 'text-green-400' : 'text-slate-500'}>
+                          {day.completed ? '✓' : '○'} W{week.weekNumber}D{day.dayNumber} — {day.label}
+                        </span>
+                        {!day.completed && (
+                          <button
+                            onClick={() => {
+                              const newWeeks = trainingProgram.weeks.map(w => ({
+                                ...w,
+                                days: w.days.map(d =>
+                                  d.dayNumber === day.dayNumber && w.weekNumber === week.weekNumber
+                                    ? { ...d, completed: true, completedAt: Date.now() }
+                                    : d
+                                ),
+                              }));
+                              // Recalculate position
+                              let calcWeek = trainingProgram.totalWeeks;
+                              let calcDay = 1;
+                              for (const w of newWeeks) {
+                                const idx = w.days.findIndex(d => !d.completed);
+                                if (idx >= 0) { calcWeek = w.weekNumber; calcDay = idx + 1; break; }
+                              }
+                              const updated = { ...trainingProgram, weeks: newWeeks, currentWeek: calcWeek, currentDayInWeek: calcDay };
+                              setTrainingProgram(updated);
+                              onSave({ ...workoutData, sessions, exercisePRs, savedExercises, routines, currentCycle, exerciseE1RMs, trainingProgram: updated });
+                            }}
+                            className="text-xs text-amber-400/70 hover:text-amber-300 px-2 py-0.5 border border-amber-500/20 rounded-lg transition-all"
+                          >
+                            Mark Done
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Today's Plan Card */}
             {trainingProgram && nextProgramDay && (
               <div className="bg-slate-900/60 border border-violet-500/20 rounded-2xl p-4 space-y-3">
