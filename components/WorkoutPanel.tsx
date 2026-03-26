@@ -77,10 +77,13 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
   const [trainingProgram, setTrainingProgram] = useState<TrainingProgram | undefined>(workoutData.trainingProgram);
 
   // Program Designer chat
-  const [isPlanningMode, setIsPlanningMode] = useState(false);
+  const [coachMode, setCoachMode] = useState<'coach' | 'design' | 'discuss'>('coach');
   const [planChatHistory, setPlanChatHistory] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
   const [pendingProgram, setPendingProgram] = useState<TrainingProgram | undefined>();
   const [iterationNotice, setIterationNotice] = useState<string | null>(null);
+  // Plan Discussion chat
+  const [discussChatHistory, setDiscussChatHistory] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  const [pendingPlanUpdate, setPendingPlanUpdate] = useState<TrainingProgram | undefined>();
 
   // Cardio state
   const [cardioSessions, setCardioSessions] = useState<CardioSession[]>(workoutData.cardioSessions || []);
@@ -465,7 +468,11 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
         };
         onSave(iterData);
         setTimeout(() => setIterationNotice(null), 10000);
-      }).catch(err => console.error('Iteration failed:', err));
+      }).catch(err => {
+        console.error('Iteration failed:', err);
+        setIterationNotice(`⚠️ AI analysis failed: ${err?.message || 'Unknown error'}. Your workout was saved successfully.`);
+        setTimeout(() => setIterationNotice(null), 15000);
+      });
     }
 
     const newData: WorkoutData = {
@@ -525,10 +532,32 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
     }
   };
 
+  // Plan Discussion conversation
+  const askPlanDiscussion = async (userMsg: string) => {
+    if (!userMsg.trim() || !trainingProgram) return;
+    setIsCoachThinking(true);
+    const newHistory = [...discussChatHistory, { role: 'user' as const, text: userMsg }];
+    setDiscussChatHistory(newHistory);
+    try {
+      const aiCtx = trainingEngine.buildAIContext(workoutData, dietData);
+      const result = await geminiService.planDiscussionChat(
+        newHistory, trainingProgram, sessions, dietData, staContext, aiCtx
+      );
+      setDiscussChatHistory(prev => [...prev, { role: 'assistant' as const, text: result.text }]);
+      if (result.updatedProgram) {
+        setPendingPlanUpdate(result.updatedProgram);
+      }
+    } catch (e) {
+      setDiscussChatHistory(prev => [...prev, { role: 'assistant' as const, text: 'Discussion unavailable right now.' }]);
+    } finally {
+      setIsCoachThinking(false);
+    }
+  };
+
   const saveProgram = (prog: TrainingProgram) => {
     setTrainingProgram(prog);
     setPendingProgram(undefined);
-    setIsPlanningMode(false);
+    setCoachMode('coach');
     setPlanChatHistory([]);
     const newData: WorkoutData = {
       sessions, exercisePRs, savedExercises, routines,
@@ -634,6 +663,20 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
         ))}
       </div>
 
+      {/* Floating AI Iteration Notice */}
+      {iterationNotice && (
+        <div className="mx-4 mt-2 bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3 flex items-start gap-2">
+          <TrendingUp size={16} className="text-amber-400 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="text-xs font-bold text-amber-300">{iterationNotice.startsWith('⚠️') ? 'AI Analysis' : 'Program Updated'}</p>
+            <p className="text-xs text-amber-200/80 mt-0.5">{iterationNotice}</p>
+          </div>
+          <button onClick={() => setIterationNotice(null)} className="ml-auto text-amber-500/50 hover:text-amber-400">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
 
@@ -731,19 +774,7 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
               </div>
             )}
 
-            {/* Iteration Notification */}
-            {iterationNotice && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3 flex items-start gap-2">
-                <TrendingUp size={16} className="text-amber-400 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-amber-300">Program Updated</p>
-                  <p className="text-xs text-amber-200/80 mt-0.5">{iterationNotice}</p>
-                </div>
-                <button onClick={() => setIterationNotice(null)} className="ml-auto text-amber-500/50 hover:text-amber-400">
-                  <X size={14} />
-                </button>
-              </div>
-            )}
+            {/* Iteration Notification - moved inline, also shown as floating */}
 
             {/* Today's Plan Card */}
             {trainingProgram && nextProgramDay && (
@@ -1345,23 +1376,31 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
         {activeTab === 'coach' && (
           <div className="space-y-4">
             {/* Mode Switcher */}
-            <div className="flex gap-2">
+            <div className="flex gap-1">
               <button
-                onClick={() => setIsPlanningMode(false)}
-                className={`flex-1 py-2 text-sm font-game rounded-xl transition-all ${!isPlanningMode ? 'bg-rose-600 text-white' : 'bg-slate-900/40 text-slate-400 border border-white/10 hover:text-white'}`}
+                onClick={() => setCoachMode('coach')}
+                className={`flex-1 py-2 text-xs font-game rounded-xl transition-all ${coachMode === 'coach' ? 'bg-rose-600 text-white' : 'bg-slate-900/40 text-slate-400 border border-white/10 hover:text-white'}`}
               >
-                <Zap size={14} className="inline mr-1" /> Coach
+                <Zap size={12} className="inline mr-0.5" /> Coach
               </button>
+              {trainingProgram && (
+                <button
+                  onClick={() => setCoachMode('discuss')}
+                  className={`flex-1 py-2 text-xs font-game rounded-xl transition-all ${coachMode === 'discuss' ? 'bg-amber-600 text-white' : 'bg-slate-900/40 text-slate-400 border border-white/10 hover:text-white'}`}
+                >
+                  <MessageCircle size={12} className="inline mr-0.5" /> Discuss Plan
+                </button>
+              )}
               <button
-                onClick={() => setIsPlanningMode(true)}
-                className={`flex-1 py-2 text-sm font-game rounded-xl transition-all ${isPlanningMode ? 'bg-violet-600 text-white' : 'bg-slate-900/40 text-slate-400 border border-white/10 hover:text-white'}`}
+                onClick={() => setCoachMode('design')}
+                className={`flex-1 py-2 text-xs font-game rounded-xl transition-all ${coachMode === 'design' ? 'bg-violet-600 text-white' : 'bg-slate-900/40 text-slate-400 border border-white/10 hover:text-white'}`}
               >
-                <Calendar size={14} className="inline mr-1" /> Design Program
+                <Calendar size={12} className="inline mr-0.5" /> Design
               </button>
             </div>
 
             {/* Saved Program Status */}
-            {trainingProgram && !isPlanningMode && programProgress && (
+            {trainingProgram && coachMode !== 'design' && programProgress && (
               <div className="bg-slate-900/60 border border-violet-500/20 rounded-2xl p-4 space-y-2">
                 <div className="flex items-center justify-between">
                   <h3 className="font-game text-sm text-violet-400 flex items-center gap-1.5">
@@ -1389,7 +1428,7 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
               </div>
             )}
 
-            {!isPlanningMode ? (
+            {coachMode === 'coach' ? (
               <>
                 {/* Coach Mode */}
                 <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 space-y-2">
@@ -1450,6 +1489,129 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
                     </button>
                   ))}
                 </div>
+              </>
+            ) : coachMode === 'discuss' ? (
+              <>
+                {/* Plan Discussion Mode */}
+                <div className="bg-slate-900/60 border border-amber-500/20 rounded-2xl p-4 space-y-2">
+                  <h3 className="font-game text-base text-amber-400 flex items-center gap-1.5"><MessageCircle size={16} /> DISCUSS YOUR PLAN</h3>
+                  <p className="text-xs text-slate-400">
+                    Ask questions about your current program or request modifications. AI will preserve your progress and only change future sessions.
+                  </p>
+                </div>
+
+                {discussChatHistory.length > 0 && (
+                  <div className="space-y-3">
+                    {discussChatHistory.map((msg, i) => (
+                      <div
+                        key={i}
+                        className={`rounded-2xl p-3 ${
+                          msg.role === 'user'
+                            ? 'bg-amber-500/10 border border-amber-500/20 ml-8'
+                            : 'bg-slate-900/60 border border-white/10 mr-4'
+                        }`}
+                      >
+                        <p className={`text-sm whitespace-pre-wrap leading-relaxed ${
+                          msg.role === 'user' ? 'text-amber-200' : 'text-slate-200'
+                        }`}>{msg.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Pending Plan Update Preview */}
+                {pendingPlanUpdate && (
+                  <div className="bg-slate-900/60 border border-emerald-500/30 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-game text-sm text-emerald-400 flex items-center gap-1.5">
+                        <CheckCircle2 size={14} /> Plan Modification Ready
+                      </h3>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setPendingPlanUpdate(undefined)}
+                          className="px-3 py-1.5 border border-white/20 text-slate-400 text-sm rounded-lg hover:text-white transition-all"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          onClick={() => {
+                            setTrainingProgram(pendingPlanUpdate);
+                            const newData: WorkoutData = {
+                              ...workoutData,
+                              sessions, exercisePRs, savedExercises, routines,
+                              currentCycle, exerciseE1RMs,
+                              trainingProgram: pendingPlanUpdate,
+                            };
+                            onSave(newData);
+                            setPendingPlanUpdate(undefined);
+                            setDiscussChatHistory(prev => [...prev, { role: 'assistant', text: '✅ Plan updated successfully! Your progress has been preserved.' }]);
+                          }}
+                          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold rounded-lg transition-all"
+                        >
+                          Apply Changes
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={coachQuestion}
+                      onChange={(e) => setCoachQuestion(e.target.value)}
+                      placeholder="Ask about or request changes to your plan..."
+                      className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-slate-500"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && coachQuestion.trim()) {
+                          askPlanDiscussion(coachQuestion);
+                          setCoachQuestion('');
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        if (coachQuestion.trim()) {
+                          askPlanDiscussion(coachQuestion);
+                          setCoachQuestion('');
+                        }
+                      }}
+                      disabled={isCoachThinking || !coachQuestion.trim()}
+                      className="px-3 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-500 disabled:opacity-50 transition-all"
+                    >
+                      {isCoachThinking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-xs text-slate-400 font-game px-1">QUICK QUESTIONS</h4>
+                  {[
+                    "Why did you choose these exercises for my push day?",
+                    "Can you swap barbell bench press for dumbbell press?",
+                    "I want more arm volume, can you add bicep work?",
+                    "My shoulder hurts, can you replace overhead press?",
+                    "Can you extend my program by 2 more weeks?",
+                  ].map((q, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setCoachQuestion(q); }}
+                      className="w-full bg-slate-900/40 border border-white/5 rounded-xl px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-slate-800/60 hover:text-white transition-all"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+
+                {discussChatHistory.length > 0 && (
+                  <button
+                    onClick={() => { setDiscussChatHistory([]); setPendingPlanUpdate(undefined); }}
+                    className="w-full py-2 text-xs text-slate-500 hover:text-red-400 transition-colors"
+                  >
+                    Clear Conversation
+                  </button>
+                )}
               </>
             ) : (
               <>

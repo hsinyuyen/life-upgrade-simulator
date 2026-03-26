@@ -742,6 +742,109 @@ ${workoutSummary}`;
     };
   }
 
+  // ===== Plan Discussion: Modify existing program without resetting progress =====
+
+  async planDiscussionChat(
+    chatHistory: { role: 'user' | 'assistant'; text: string }[],
+    currentProgram: TrainingProgram,
+    recentWorkouts: WorkoutSession[],
+    dietData: DietData | null,
+    staContext?: STAContext,
+    aiContext?: string
+  ): Promise<{ text: string; updatedProgram?: TrainingProgram }> {
+    const workoutSummary = this.buildWorkoutSummary(recentWorkouts);
+    const staSection = this.buildSTAContext(staContext);
+    const bodyStats = dietData?.profile
+      ? `Body: ${dietData.profile.height}cm, ${dietData.profile.weight}kg${dietData.profile.bodyFat ? `, ${dietData.profile.bodyFat}%BF` : ''}${dietData.profile.muscleMass ? `, ${dietData.profile.muscleMass}kg muscle` : ''}`
+      : '';
+
+    // Serialize current program with completion status
+    const programJSON = JSON.stringify(currentProgram, null, 2);
+
+    const systemPrompt = `# Role: Training Plan Consultant
+
+You are reviewing and potentially modifying an EXISTING training program. The user wants to discuss their plan and possibly make changes.
+
+## CRITICAL RULES:
+1. **NEVER reset progress**: All days with "completed": true MUST remain completed. Do NOT change completed, completedSessionId, or completedAt fields.
+2. **NEVER change currentWeek or currentDayInWeek** unless the user explicitly asks to skip ahead.
+3. **Preserve the program ID, createdAt, and iterationCount**.
+4. You may modify FUTURE (uncompleted) days: change exercises, sets, reps, RPE, weights, or add/remove exercises.
+5. You may add or remove entire future weeks (but never delete completed weeks).
+6. You may change the program name, phase, specialization, or aiNotes.
+
+## When suggesting a modification:
+- First explain what you would change and WHY in plain text.
+- Ask "Should I apply this change?" before outputting the modified program.
+- If the user confirms, output the FULL updated program inside [PROGRAM_UPDATE]...[/PROGRAM_UPDATE] tags.
+- The JSON must be the COMPLETE program object (same schema as the current one), with all completed days preserved exactly as-is.
+
+## Current Program:
+\`\`\`json
+${programJSON}
+\`\`\`
+
+${bodyStats}
+${staSection}
+${aiContext ? `\n## Long-term Trends:\n${aiContext}` : ''}
+
+Recent Training History:
+${workoutSummary}`;
+
+    const messages: { role: 'user' | 'model'; parts: { text: string }[] }[] = [
+      { role: 'user', parts: [{ text: systemPrompt + '\n\nI want to discuss my current training plan.' }] },
+      { role: 'model', parts: [{ text: 'I can see your current program. What would you like to discuss or change? I can help with:\n- Swapping exercises\n- Adjusting volume (sets/reps)\n- Changing intensity (RPE/weight targets)\n- Adding or removing training days\n- Modifying the remaining weeks\n\nWhat\'s on your mind?' }] },
+    ];
+
+    for (const msg of chatHistory) {
+      messages.push({ role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.text }] });
+    }
+
+    try {
+      const response = await this.getAI().models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: messages,
+      });
+      const text = response.text || '';
+
+      let updatedProgram: TrainingProgram | undefined;
+      const jsonMatch = text.match(/\[PROGRAM_UPDATE\]([\s\S]*?)\[\/PROGRAM_UPDATE\]/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1]);
+          // Preserve critical fields from original program
+          updatedProgram = {
+            ...this.normalizeProgram(parsed),
+            id: currentProgram.id,
+            createdAt: currentProgram.createdAt,
+            iterationCount: currentProgram.iterationCount,
+            currentWeek: parsed.currentWeek ?? currentProgram.currentWeek,
+            currentDayInWeek: parsed.currentDayInWeek ?? currentProgram.currentDayInWeek,
+          };
+          // Restore completed status from original for safety
+          for (let wi = 0; wi < Math.min(currentProgram.weeks.length, updatedProgram.weeks.length); wi++) {
+            for (let di = 0; di < Math.min(currentProgram.weeks[wi].days.length, updatedProgram.weeks[wi].days.length); di++) {
+              const origDay = currentProgram.weeks[wi].days[di];
+              if (origDay.completed) {
+                updatedProgram.weeks[wi].days[di].completed = true;
+                updatedProgram.weeks[wi].days[di].completedSessionId = origDay.completedSessionId;
+                updatedProgram.weeks[wi].days[di].completedAt = origDay.completedAt;
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Failed to parse plan update JSON:", e);
+        }
+      }
+
+      const cleanText = text.replace(/\[PROGRAM_UPDATE\][\s\S]*?\[\/PROGRAM_UPDATE\]/, '').trim();
+      return { text: cleanText, updatedProgram };
+    } catch (e) {
+      console.error("Plan discussion failed:", e);
+      return { text: 'Plan discussion is unavailable right now. Please try again.' };
+    }
+  }
+
   // ===== STA v2: Program Iteration (Post-Session Auto-Adjust) =====
 
   async iterateProgram(
