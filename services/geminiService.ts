@@ -402,11 +402,15 @@ Background: Simple dark gradient background. Square format.`;
 
   async analyzeDietProgress(profile: DietProfile, bodyLogs: BodyLog[], currentPlan: DietPlan | null): Promise<{ analysis: string; suggestedChanges: string[]; newPlan: DietPlan | null }> {
     const sortedLogs = [...bodyLogs].sort((a, b) => a.date.localeCompare(b.date));
-    const logsStr = sortedLogs.map(l => 
+    const recent14 = sortedLogs.slice(-14);
+    const logsStr = recent14.map(l =>
       `${l.date}: ${l.weight}kg${l.bodyFat ? `, ${l.bodyFat}% BF` : ''}${l.muscleMass ? `, ${l.muscleMass}kg muscle` : ''}`
     ).join('\n');
 
-    const planStr = currentPlan 
+    // Calculate body log trends
+    const trendAnalysis = this.calculateBodyTrends(recent14);
+
+    const planStr = currentPlan
       ? `Current plan: ${currentPlan.totalCalories}kcal, ${currentPlan.totalProtein}g protein, ${currentPlan.totalCarbs}g carbs, ${currentPlan.totalFat}g fat. Meals: ${currentPlan.recipes.map(r => r.name).join(', ')}`
       : 'No current plan';
 
@@ -415,14 +419,17 @@ Background: Simple dark gradient background. Square format.`;
     Profile: Height ${profile.height}cm, Goal: ${profile.goal}
     Preferences: ${profile.preferences || 'None'}
 
-    Body Data History:
+    Body Data History (last 14 entries):
     ${logsStr || 'No data yet'}
+
+    ## Trend Analysis (computed):
+    ${trendAnalysis}
 
     ${planStr}
 
     Analyze the progress data and provide:
-    1. A brief analysis of the trends (weight, body fat, muscle changes)
-    2. 3-5 specific suggested changes to the diet
+    1. A brief analysis incorporating the computed trends (weight direction, weekly rate of change, body fat changes)
+    2. 3-5 specific suggested changes to the diet — be precise about calorie/macro adjustments based on the rate of change
     3. If changes are needed, generate an updated diet plan (same JSON format as before with recipes, groceryList, totalCalories, totalProtein, totalCarbs, totalFat, aiNotes)
     4. If no changes needed, set newPlan to null
 
@@ -472,6 +479,57 @@ Background: Simple dark gradient background. Square format.`;
     }
   }
   // ===== STA v2: Coach Advice =====
+
+  private calculateBodyTrends(logs: BodyLog[]): string {
+    if (logs.length < 2) return 'Insufficient data for trend analysis.';
+    const parts: string[] = [];
+
+    // Weight trend
+    const first = logs[0];
+    const last = logs[logs.length - 1];
+    const totalDelta = last.weight - first.weight;
+    const daysBetween = Math.max(1, (new Date(last.date).getTime() - new Date(first.date).getTime()) / (1000 * 60 * 60 * 24));
+    const weeklyRate = (totalDelta / daysBetween) * 7;
+    const direction = totalDelta > 0.3 ? 'GAINING' : totalDelta < -0.3 ? 'LOSING' : 'STABLE';
+    parts.push(`Weight: ${first.weight}kg → ${last.weight}kg (${totalDelta > 0 ? '+' : ''}${totalDelta.toFixed(1)}kg over ${Math.round(daysBetween)}d)`);
+    parts.push(`Weekly rate: ${weeklyRate > 0 ? '+' : ''}${weeklyRate.toFixed(2)}kg/week — Direction: ${direction}`);
+
+    // Ideal rate check
+    if (direction === 'GAINING' && weeklyRate > 0.5) parts.push('⚠️ Gaining too fast (>0.5kg/wk), likely excess fat gain');
+    if (direction === 'LOSING' && weeklyRate < -1.0) parts.push('⚠️ Losing too fast (>1kg/wk), risk of muscle loss');
+
+    // Body fat trend
+    const bfLogs = logs.filter(l => l.bodyFat != null);
+    if (bfLogs.length >= 2) {
+      const bfFirst = bfLogs[0].bodyFat!;
+      const bfLast = bfLogs[bfLogs.length - 1].bodyFat!;
+      const bfDelta = bfLast - bfFirst;
+      parts.push(`Body fat: ${bfFirst}% → ${bfLast}% (${bfDelta > 0 ? '+' : ''}${bfDelta.toFixed(1)}%)`);
+    }
+
+    // Muscle mass trend
+    const mmLogs = logs.filter(l => l.muscleMass != null);
+    if (mmLogs.length >= 2) {
+      const mmFirst = mmLogs[0].muscleMass!;
+      const mmLast = mmLogs[mmLogs.length - 1].muscleMass!;
+      const mmDelta = mmLast - mmFirst;
+      parts.push(`Muscle mass: ${mmFirst}kg → ${mmLast}kg (${mmDelta > 0 ? '+' : ''}${mmDelta.toFixed(1)}kg)`);
+    }
+
+    // 7-day average vs 14-day average for short-term direction
+    if (logs.length >= 7) {
+      const recent7 = logs.slice(-7);
+      const older7 = logs.slice(-14, -7);
+      if (older7.length > 0) {
+        const avg7 = recent7.reduce((s, l) => s + l.weight, 0) / recent7.length;
+        const avgOlder = older7.reduce((s, l) => s + l.weight, 0) / older7.length;
+        const shortDelta = avg7 - avgOlder;
+        parts.push(`7d avg vs prior 7d: ${shortDelta > 0 ? '+' : ''}${shortDelta.toFixed(2)}kg`);
+      }
+    }
+
+    return parts.join('\n');
+  }
 
   private buildWorkoutSummary(recentWorkouts: WorkoutSession[]): string {
     return recentWorkouts.slice(0, 14).map(s => {
@@ -1319,6 +1377,131 @@ Return JSON:
       console.error('Weekly report generation failed:', e);
       return null;
     }
+  }
+
+  async generateRecipeFromIngredients(
+    ingredients: string,
+    mealType: string,
+    targets: { calories: number; protein: number; carbs: number; fat: number }
+  ): Promise<{ name: string; ingredients: string[]; instructions: string[]; macros: { calories: number; protein: number; carbs: number; fat: number }; prepTime: string; notes: string }> {
+    const perMealCal = Math.round(targets.calories / 3);
+    const perMealPro = Math.round(targets.protein / 3);
+    const perMealCarb = Math.round(targets.carbs / 3);
+    const perMealFat = Math.round(targets.fat / 3);
+
+    const prompt = `You are a nutrition-focused chef. Create a ${mealType} recipe using these available ingredients: ${ingredients}
+
+Macro targets for this meal: ~${perMealCal} kcal, ~${perMealPro}g protein, ~${perMealCarb}g carbs, ~${perMealFat}g fat
+
+Create a practical, delicious recipe that fits these macros. Be specific with quantities.`;
+
+    const response = await this.getAI().models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: { parts: [{ text: prompt }] },
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING },
+            ingredients: { type: Type.ARRAY, items: { type: Type.STRING } },
+            instructions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            macros: {
+              type: Type.OBJECT,
+              properties: {
+                calories: { type: Type.NUMBER },
+                protein: { type: Type.NUMBER },
+                carbs: { type: Type.NUMBER },
+                fat: { type: Type.NUMBER },
+              },
+              required: ['calories', 'protein', 'carbs', 'fat']
+            },
+            prepTime: { type: Type.STRING },
+            notes: { type: Type.STRING },
+          },
+          required: ['name', 'ingredients', 'instructions', 'macros', 'prepTime']
+        }
+      }
+    });
+    return JSON.parse(response.text || '{}');
+  }
+
+  async unifiedCoachChat(
+    history: { role: 'user' | 'assistant'; text: string }[],
+    userMsg: string,
+    recentWorkouts: WorkoutSession[],
+    dietData: DietData | null,
+    staContext?: STAContext,
+    aiContext?: string,
+    trainingProgram?: TrainingProgram,
+    mode: 'coach' | 'design' | 'discuss' = 'coach'
+  ): Promise<{ text: string; program?: TrainingProgram; updatedProgram?: TrainingProgram }> {
+    const workoutSummary = this.buildWorkoutSummary(recentWorkouts);
+    const staSection = this.buildSTAContext(staContext);
+    const bodyStats = dietData?.profile
+      ? `Body: ${dietData.profile.height}cm, ${dietData.profile.weight}kg${dietData.profile.bodyFat ? `, ${dietData.profile.bodyFat}%BF` : ''}${dietData.profile.muscleMass ? `, ${dietData.profile.muscleMass}kg muscle` : ''}`
+      : '';
+
+    let systemPrompt: string;
+    if (mode === 'design') {
+      systemPrompt = `# Role: Training Program Designer
+You are an expert program designer. Design structured training programs based on user goals.
+${workoutSummary}
+${staSection}
+${bodyStats}
+
+When ready to create a program, output it inside [PROGRAM]...[/PROGRAM] tags as valid JSON (fields: name, phase, totalWeeks, daysPerWeek, splitType, specialization, weeks, aiNotes).`;
+    } else if (mode === 'discuss' && trainingProgram) {
+      const programJSON = JSON.stringify(trainingProgram, null, 2);
+      systemPrompt = `# Role: Training Plan Consultant
+You are reviewing the user's existing training program.
+## CRITICAL RULES:
+1. NEVER reset completed days. All "completed: true" fields must remain.
+2. Preserve currentWeek and currentDayInWeek unless user explicitly requests change.
+3. Preserve program ID, createdAt, iterationCount.
+## Current Program:
+${programJSON}
+${workoutSummary}
+${bodyStats}
+
+Explain changes first, then output the FULL updated program inside [PROGRAM_UPDATE]...[/PROGRAM_UPDATE] tags.`;
+    } else {
+      systemPrompt = `# Role: AI Workout Coach
+You are an expert fitness coach with full context of the user's training, diet, and recovery.
+${workoutSummary}
+${staSection}
+${bodyStats}${aiContext ? `\n## Additional Context:\n${aiContext}` : ''}
+
+Answer concisely and practically. Reference specific data when relevant.`;
+    }
+
+    const historyText = history.map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.text}`).join('\n\n');
+    const fullPrompt = `${systemPrompt}\n\n${historyText ? `## Conversation History:\n${historyText}\n\n` : ''}User: ${userMsg}\n\nAssistant:`;
+
+    const response = await this.getAI().models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: { parts: [{ text: fullPrompt }] },
+    });
+    const text = response.text || '';
+
+    let program: TrainingProgram | undefined;
+    let updatedProgram: TrainingProgram | undefined;
+
+    const programMatch = text.match(/\[PROGRAM\]([\s\S]*?)\[\/PROGRAM\]/);
+    if (programMatch) {
+      try { program = this.normalizeProgram(JSON.parse(programMatch[1])); } catch {}
+    }
+    const updateMatch = text.match(/\[PROGRAM_UPDATE\]([\s\S]*?)\[\/PROGRAM_UPDATE\]/);
+    if (updateMatch) {
+      try { updatedProgram = this.normalizeProgram(JSON.parse(updateMatch[1])); } catch {}
+    }
+
+    const cleanText = text
+      .replace(/\[PROGRAM\][\s\S]*?\[\/PROGRAM\]/g, '[Program ready for review]')
+      .replace(/\[PROGRAM_UPDATE\][\s\S]*?\[\/PROGRAM_UPDATE\]/g, '[Plan update ready for review]')
+      .trim();
+
+    return { text: cleanText, program, updatedProgram };
   }
 }
 

@@ -46,11 +46,10 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
   const [workoutNotes, setWorkoutNotes] = useState('');
   const [showExerciseForm, setShowExerciseForm] = useState(false);
 
-  // AI Coach
+  // AI Coach (unified)
   const [coachQuestion, setCoachQuestion] = useState('');
-  const [coachResponse, setCoachResponse] = useState('');
   const [isCoachThinking, setIsCoachThinking] = useState(false);
-  const [chatHistory, setChatHistory] = useState<{ q: string; a: string }[]>([]);
+  const [unifiedChatHistory, setUnifiedChatHistory] = useState<{ role: 'user' | 'assistant'; text: string; mode?: string }[]>([]);
 
   // Saved exercises library & routines
   const [savedExercises, setSavedExercises] = useState<SavedExercise[]>(workoutData.savedExercises || []);
@@ -76,13 +75,9 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
   // Training Program
   const [trainingProgram, setTrainingProgram] = useState<TrainingProgram | undefined>(workoutData.trainingProgram);
 
-  // Program Designer chat
-  const [coachMode, setCoachMode] = useState<'coach' | 'design' | 'discuss'>('coach');
-  const [planChatHistory, setPlanChatHistory] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  // AI Coach unified state
   const [pendingProgram, setPendingProgram] = useState<TrainingProgram | undefined>();
   const [iterationNotice, setIterationNotice] = useState<string | null>(null);
-  // Plan Discussion chat
-  const [discussChatHistory, setDiscussChatHistory] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
   const [pendingPlanUpdate, setPendingPlanUpdate] = useState<TrainingProgram | undefined>();
 
   // Cardio state
@@ -98,6 +93,11 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
     sleepHours: '7', sleepQuality: '7', muscleSoreness: '3', energyLevel: '7', stressLevel: '3'
   });
   const [todayReadiness, setTodayReadiness] = useState<number | null>(null);
+
+  // Sync trainingProgram from Firebase when prop updates after initial mount
+  React.useEffect(() => {
+    setTrainingProgram(workoutData.trainingProgram);
+  }, [workoutData.trainingProgram]);
 
   React.useEffect(() => {
     trainingEngine.setPhase(currentCycle.phase);
@@ -493,72 +493,46 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
     localStorage.removeItem('workout_progress');
   };
 
-  const askCoach = async () => {
-    if (!coachQuestion.trim()) return;
+  // Unified coach: auto-detects mode from message content
+  const askUnified = async (userMsg: string) => {
+    if (!userMsg.trim()) return;
     setIsCoachThinking(true);
+
+    // Auto-detect mode from message content
+    const lower = userMsg.toLowerCase();
+    const isDesign = /design|create|build|generate.*(program|plan|mesocycle)|new program|start designing/i.test(lower);
+    const isDiscuss = trainingProgram && /swap|replace|change|modify|adjust|add.*exercise|remove.*exercise|extend|shorten|why did you|can you.*my plan/i.test(lower);
+    const autoMode = isDesign ? 'design' : isDiscuss ? 'discuss' : 'coach';
+
+    const newHistory = [...unifiedChatHistory, { role: 'user' as const, text: userMsg, mode: autoMode }];
+    setUnifiedChatHistory(newHistory);
     try {
       const aiCtx = trainingEngine.buildAIContext(workoutData, dietData);
-      const answer = await geminiService.workoutCoachAdvice(
-        coachQuestion, sessions, dietData, staContext, aiCtx
+      const result = await geminiService.unifiedCoachChat(
+        newHistory.map(h => ({ role: h.role, text: h.text })),
+        userMsg,
+        sessions,
+        dietData,
+        staContext,
+        aiCtx,
+        trainingProgram,
+        autoMode
       );
-      setChatHistory(prev => [...prev, { q: coachQuestion, a: answer }]);
-      setCoachResponse(answer);
-      setCoachQuestion('');
+      setUnifiedChatHistory(prev => [...prev, { role: 'assistant', text: result.text, mode: autoMode }]);
+      if (result.program) setPendingProgram(result.program);
+      if (result.updatedProgram) setPendingPlanUpdate(result.updatedProgram);
     } catch (e) {
-      setCoachResponse('Sorry, the coach is unavailable right now.');
+      setUnifiedChatHistory(prev => [...prev, { role: 'assistant', text: 'Coach unavailable right now.', mode: autoMode }]);
     } finally {
       setIsCoachThinking(false);
     }
   };
 
   // Program Designer conversation
-  const askProgramDesigner = async (userMsg: string) => {
-    if (!userMsg.trim()) return;
-    setIsCoachThinking(true);
-    const newHistory = [...planChatHistory, { role: 'user' as const, text: userMsg }];
-    setPlanChatHistory(newHistory);
-    try {
-      const result = await geminiService.programDesignerChat(
-        newHistory, sessions, dietData, staContext
-      );
-      setPlanChatHistory(prev => [...prev, { role: 'assistant' as const, text: result.text }]);
-      if (result.program) {
-        setPendingProgram(result.program);
-      }
-    } catch (e) {
-      setPlanChatHistory(prev => [...prev, { role: 'assistant' as const, text: 'Designer unavailable.' }]);
-    } finally {
-      setIsCoachThinking(false);
-    }
-  };
-
-  // Plan Discussion conversation
-  const askPlanDiscussion = async (userMsg: string) => {
-    if (!userMsg.trim() || !trainingProgram) return;
-    setIsCoachThinking(true);
-    const newHistory = [...discussChatHistory, { role: 'user' as const, text: userMsg }];
-    setDiscussChatHistory(newHistory);
-    try {
-      const aiCtx = trainingEngine.buildAIContext(workoutData, dietData);
-      const result = await geminiService.planDiscussionChat(
-        newHistory, trainingProgram, sessions, dietData, staContext, aiCtx
-      );
-      setDiscussChatHistory(prev => [...prev, { role: 'assistant' as const, text: result.text }]);
-      if (result.updatedProgram) {
-        setPendingPlanUpdate(result.updatedProgram);
-      }
-    } catch (e) {
-      setDiscussChatHistory(prev => [...prev, { role: 'assistant' as const, text: 'Discussion unavailable right now.' }]);
-    } finally {
-      setIsCoachThinking(false);
-    }
-  };
-
   const saveProgram = (prog: TrainingProgram) => {
     setTrainingProgram(prog);
     setPendingProgram(undefined);
-    setCoachMode('coach');
-    setPlanChatHistory([]);
+    setUnifiedChatHistory(prev => [...prev, { role: 'assistant', text: '✅ Program saved and activated!' }]);
     const newData: WorkoutData = {
       sessions, exercisePRs, savedExercises, routines,
       currentCycle, exerciseE1RMs, trainingProgram: prog,
@@ -1529,367 +1503,149 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
         {/* ===== AI COACH + PROGRAM DESIGNER TAB ===== */}
         {activeTab === 'coach' && (
           <div className="space-y-4">
-            {/* Mode Switcher */}
-            <div className="flex gap-1">
-              <button
-                onClick={() => setCoachMode('coach')}
-                className={`flex-1 py-2 text-xs font-game rounded-xl transition-all ${coachMode === 'coach' ? 'bg-rose-600 text-white' : 'bg-slate-900/40 text-slate-400 border border-white/10 hover:text-white'}`}
-              >
-                <Zap size={12} className="inline mr-0.5" /> Coach
-              </button>
-              {trainingProgram && (
-                <button
-                  onClick={() => setCoachMode('discuss')}
-                  className={`flex-1 py-2 text-xs font-game rounded-xl transition-all ${coachMode === 'discuss' ? 'bg-amber-600 text-white' : 'bg-slate-900/40 text-slate-400 border border-white/10 hover:text-white'}`}
-                >
-                  <MessageCircle size={12} className="inline mr-0.5" /> Discuss Plan
-                </button>
-              )}
-              <button
-                onClick={() => setCoachMode('design')}
-                className={`flex-1 py-2 text-xs font-game rounded-xl transition-all ${coachMode === 'design' ? 'bg-violet-600 text-white' : 'bg-slate-900/40 text-slate-400 border border-white/10 hover:text-white'}`}
-              >
-                <Calendar size={12} className="inline mr-0.5" /> Design
-              </button>
+            {/* Header */}
+            <div className="bg-slate-900/60 border border-rose-500/20 rounded-2xl p-4 space-y-1">
+              <h3 className="font-game text-base text-rose-400 flex items-center gap-1.5">
+                <Zap size={16} /> AI COACH
+              </h3>
+              <p className="text-xs text-slate-400">
+                Ask anything — training advice, plan changes, or design a new program. AI auto-detects what you need.
+              </p>
             </div>
 
-            {/* Saved Program Status */}
-            {trainingProgram && coachMode !== 'design' && programProgress && (
-              <div className="bg-slate-900/60 border border-violet-500/20 rounded-2xl p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-game text-sm text-violet-400 flex items-center gap-1.5">
-                    <Calendar size={14} /> {trainingProgram.name}
-                  </h3>
-                  <span className="text-xs text-slate-400">
-                    Week {trainingProgram.currentWeek}/{trainingProgram.totalWeeks}
-                  </span>
-                </div>
-                <div className="w-full bg-slate-800 rounded-full h-2">
+            {/* Chat History */}
+            {unifiedChatHistory.length > 0 && (
+              <div className="space-y-3">
+                {unifiedChatHistory.map((msg, i) => (
                   <div
-                    className="bg-violet-500 h-2 rounded-full transition-all"
-                    style={{ width: `${programProgress.pct}%` }}
-                  />
-                </div>
-                <div className="flex items-center justify-between text-xs text-slate-500">
-                  <span>{programProgress.completedDays}/{programProgress.totalDays} sessions</span>
-                  <span>{programProgress.pct}%</span>
-                </div>
-                {trainingProgram.iterationCount > 0 && (
-                  <p className="text-xs text-amber-400/80">
-                    Iterated {trainingProgram.iterationCount}x based on performance
-                  </p>
-                )}
+                    key={i}
+                    className={`rounded-2xl p-3 ${
+                      msg.role === 'user'
+                        ? 'bg-rose-500/10 border border-rose-500/20 ml-8'
+                        : 'bg-slate-900/60 border border-white/10 mr-4'
+                    }`}
+                  >
+                    {msg.role === 'assistant' && msg.mode && msg.mode !== 'coach' && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded mb-1 inline-block ${
+                        msg.mode === 'discuss' ? 'bg-amber-500/20 text-amber-400' : 'bg-violet-500/20 text-violet-400'
+                      }`}>
+                        {msg.mode === 'discuss' ? 'Plan Modify' : 'Program Design'}
+                      </span>
+                    )}
+                    <p className={`text-sm whitespace-pre-wrap leading-relaxed ${
+                      msg.role === 'user' ? 'text-rose-200' : 'text-slate-200'
+                    }`}>{msg.text}</p>
+                  </div>
+                ))}
               </div>
             )}
 
-            {coachMode === 'coach' ? (
-              <>
-                {/* Coach Mode */}
-                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 space-y-2">
-                  <h3 className="font-game text-base text-rose-400 flex items-center gap-1.5"><Zap size={16} /> AI WORKOUT COACH</h3>
-                  <p className="text-xs text-slate-400">Ask anything — the AI reads your history, diet, fatigue, and active program.</p>
+            {/* Pending New Program */}
+            {pendingProgram && (
+              <div className="bg-slate-900/60 border border-emerald-500/30 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-game text-sm text-emerald-400 flex items-center gap-1.5">
+                    <CheckCircle2 size={14} /> New Program Ready
+                  </h3>
+                  <button
+                    onClick={() => saveProgram(pendingProgram)}
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold rounded-lg transition-all"
+                  >
+                    Save & Activate
+                  </button>
                 </div>
+                <div className="text-xs text-slate-300 space-y-1">
+                  <p><strong>{pendingProgram.name}</strong> — {pendingProgram.splitType}</p>
+                  <p>{pendingProgram.totalWeeks} weeks, {pendingProgram.daysPerWeek} days/week, Phase: {pendingProgram.phase}</p>
+                </div>
+              </div>
+            )}
 
-                {chatHistory.length > 0 && (
-                  <div className="space-y-3">
-                    {chatHistory.map((chat, i) => (
-                      <div key={i} className="space-y-2">
-                        <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-3 ml-8">
-                          <p className="text-sm text-rose-200">{chat.q}</p>
-                        </div>
-                        <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 mr-4">
-                          <p className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">{chat.a}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-3">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={coachQuestion}
-                      onChange={(e) => setCoachQuestion(e.target.value)}
-                      placeholder="Ask your AI coach..."
-                      className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-slate-500"
-                      onKeyDown={(e) => e.key === 'Enter' && askCoach()}
-                    />
+            {/* Pending Plan Update */}
+            {pendingPlanUpdate && (
+              <div className="bg-slate-900/60 border border-amber-500/30 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-game text-sm text-amber-400 flex items-center gap-1.5">
+                    <CheckCircle2 size={14} /> Plan Modification Ready
+                  </h3>
+                  <div className="flex gap-2">
                     <button
-                      onClick={askCoach}
-                      disabled={isCoachThinking || !coachQuestion.trim()}
-                      className="px-3 py-2 bg-rose-600 text-white rounded-lg hover:bg-rose-500 disabled:opacity-50 transition-all"
+                      onClick={() => setPendingPlanUpdate(undefined)}
+                      className="px-3 py-1.5 border border-white/20 text-slate-400 text-sm rounded-lg hover:text-white transition-all"
                     >
-                      {isCoachThinking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                      Reject
                     </button>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <h4 className="text-xs text-slate-400 font-game px-1">QUICK QUESTIONS</h4>
-                  {[
-                    "What should I train today based on my history?",
-                    "Am I eating enough protein for my training?",
-                    "How can I break through my plateau?",
-                    "What's my weakest muscle group?",
-                    "Should I increase my training volume?",
-                  ].map((q, i) => (
-                    <button
-                      key={i}
-                      onClick={() => { setCoachQuestion(q); }}
-                      className="w-full bg-slate-900/40 border border-white/5 rounded-xl px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-slate-800/60 hover:text-white transition-all"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              </>
-            ) : coachMode === 'discuss' ? (
-              <>
-                {/* Plan Discussion Mode */}
-                <div className="bg-slate-900/60 border border-amber-500/20 rounded-2xl p-4 space-y-2">
-                  <h3 className="font-game text-base text-amber-400 flex items-center gap-1.5"><MessageCircle size={16} /> DISCUSS YOUR PLAN</h3>
-                  <p className="text-xs text-slate-400">
-                    Ask questions about your current program or request modifications. AI will preserve your progress and only change future sessions.
-                  </p>
-                </div>
-
-                {discussChatHistory.length > 0 && (
-                  <div className="space-y-3">
-                    {discussChatHistory.map((msg, i) => (
-                      <div
-                        key={i}
-                        className={`rounded-2xl p-3 ${
-                          msg.role === 'user'
-                            ? 'bg-amber-500/10 border border-amber-500/20 ml-8'
-                            : 'bg-slate-900/60 border border-white/10 mr-4'
-                        }`}
-                      >
-                        <p className={`text-sm whitespace-pre-wrap leading-relaxed ${
-                          msg.role === 'user' ? 'text-amber-200' : 'text-slate-200'
-                        }`}>{msg.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Pending Plan Update Preview */}
-                {pendingPlanUpdate && (
-                  <div className="bg-slate-900/60 border border-emerald-500/30 rounded-2xl p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-game text-sm text-emerald-400 flex items-center gap-1.5">
-                        <CheckCircle2 size={14} /> Plan Modification Ready
-                      </h3>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setPendingPlanUpdate(undefined)}
-                          className="px-3 py-1.5 border border-white/20 text-slate-400 text-sm rounded-lg hover:text-white transition-all"
-                        >
-                          Reject
-                        </button>
-                        <button
-                          onClick={() => {
-                            setTrainingProgram(pendingPlanUpdate);
-                            const newData: WorkoutData = {
-                              ...workoutData,
-                              sessions, exercisePRs, savedExercises, routines,
-                              currentCycle, exerciseE1RMs,
-                              trainingProgram: pendingPlanUpdate,
-                            };
-                            onSave(newData);
-                            setPendingPlanUpdate(undefined);
-                            setDiscussChatHistory(prev => [...prev, { role: 'assistant', text: '✅ Plan updated successfully! Your progress has been preserved.' }]);
-                          }}
-                          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold rounded-lg transition-all"
-                        >
-                          Apply Changes
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-3">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={coachQuestion}
-                      onChange={(e) => setCoachQuestion(e.target.value)}
-                      placeholder="Ask about or request changes to your plan..."
-                      className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-slate-500"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && coachQuestion.trim()) {
-                          askPlanDiscussion(coachQuestion);
-                          setCoachQuestion('');
-                        }
-                      }}
-                    />
                     <button
                       onClick={() => {
-                        if (coachQuestion.trim()) {
-                          askPlanDiscussion(coachQuestion);
-                          setCoachQuestion('');
-                        }
+                        setTrainingProgram(pendingPlanUpdate);
+                        onSave({ ...workoutData, sessions, exercisePRs, savedExercises, routines, currentCycle, exerciseE1RMs, trainingProgram: pendingPlanUpdate });
+                        setPendingPlanUpdate(undefined);
+                        setUnifiedChatHistory(prev => [...prev, { role: 'assistant', text: '✅ Plan updated! Your progress has been preserved.' }]);
                       }}
-                      disabled={isCoachThinking || !coachQuestion.trim()}
-                      className="px-3 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-500 disabled:opacity-50 transition-all"
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold rounded-lg transition-all"
                     >
-                      {isCoachThinking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                      Apply Changes
                     </button>
                   </div>
                 </div>
+              </div>
+            )}
 
-                <div className="space-y-2">
-                  <h4 className="text-xs text-slate-400 font-game px-1">QUICK QUESTIONS</h4>
-                  {[
-                    "Why did you choose these exercises for my push day?",
-                    "Can you swap barbell bench press for dumbbell press?",
-                    "I want more arm volume, can you add bicep work?",
-                    "My shoulder hurts, can you replace overhead press?",
-                    "Can you extend my program by 2 more weeks?",
-                  ].map((q, i) => (
-                    <button
-                      key={i}
-                      onClick={() => { setCoachQuestion(q); }}
-                      className="w-full bg-slate-900/40 border border-white/5 rounded-xl px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-slate-800/60 hover:text-white transition-all"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
+            {/* Input */}
+            <div className="bg-slate-900/60 border border-rose-500/20 rounded-2xl p-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={coachQuestion}
+                  onChange={(e) => setCoachQuestion(e.target.value)}
+                  placeholder="Ask your coach anything..."
+                  className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-slate-500"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && coachQuestion.trim()) {
+                      askUnified(coachQuestion);
+                      setCoachQuestion('');
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => { if (coachQuestion.trim()) { askUnified(coachQuestion); setCoachQuestion(''); } }}
+                  disabled={isCoachThinking || !coachQuestion.trim()}
+                  className="px-3 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg disabled:opacity-50 transition-all"
+                >
+                  {isCoachThinking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                </button>
+              </div>
+            </div>
 
-                {discussChatHistory.length > 0 && (
+            {/* Quick Questions */}
+            {unifiedChatHistory.length === 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs text-slate-400 font-game px-1">QUICK QUESTIONS</h4>
+                {[
+                  "What should I train today based on my history?",
+                  "Am I eating enough protein for my training?",
+                  "How can I break through my plateau?",
+                  "Design me a new training program",
+                  "Can you swap an exercise in my current plan?",
+                ].map((q, i) => (
                   <button
-                    onClick={() => { setDiscussChatHistory([]); setPendingPlanUpdate(undefined); }}
-                    className="w-full py-2 text-xs text-slate-500 hover:text-red-400 transition-colors"
+                    key={i}
+                    onClick={() => { setCoachQuestion(q); }}
+                    className="w-full bg-slate-900/40 border border-white/5 rounded-xl px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-slate-800/60 hover:text-white transition-all"
                   >
-                    Clear Conversation
+                    {q}
                   </button>
-                )}
-              </>
-            ) : (
-              <>
-                {/* Program Designer Mode */}
-                <div className="bg-slate-900/60 border border-violet-500/20 rounded-2xl p-4 space-y-2">
-                  <h3 className="font-game text-base text-violet-400 flex items-center gap-1.5"><Calendar size={16} /> PROGRAM DESIGNER</h3>
-                  <p className="text-xs text-slate-400">
-                    The AI will ask about your goals, preferences, and weak points, then design a complete mesocycle program that auto-adjusts as you train.
-                  </p>
-                </div>
+                ))}
+              </div>
+            )}
 
-                {planChatHistory.length === 0 && (
-                  <button
-                    onClick={() => askProgramDesigner('I want to design a new training program.')}
-                    disabled={isCoachThinking}
-                    className="w-full py-3 bg-violet-600 hover:bg-violet-500 text-white font-game rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {isCoachThinking ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-                    Start Designing
-                  </button>
-                )}
-
-                {planChatHistory.length > 0 && (
-                  <div className="space-y-3">
-                    {planChatHistory.map((msg, i) => (
-                      <div
-                        key={i}
-                        className={`rounded-2xl p-3 ${
-                          msg.role === 'user'
-                            ? 'bg-violet-500/10 border border-violet-500/20 ml-8'
-                            : 'bg-slate-900/60 border border-white/10 mr-4'
-                        }`}
-                      >
-                        <p className={`text-sm whitespace-pre-wrap leading-relaxed ${
-                          msg.role === 'user' ? 'text-violet-200' : 'text-slate-200'
-                        }`}>{msg.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Pending Program Preview */}
-                {pendingProgram && (
-                  <div className="bg-slate-900/60 border border-emerald-500/30 rounded-2xl p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-game text-sm text-emerald-400 flex items-center gap-1.5">
-                        <CheckCircle2 size={14} /> Program Ready
-                      </h3>
-                      <button
-                        onClick={() => saveProgram(pendingProgram)}
-                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold rounded-lg transition-all"
-                      >
-                        Save & Activate
-                      </button>
-                    </div>
-                    <div className="text-xs text-slate-300 space-y-1">
-                      <p><strong>{pendingProgram.name}</strong> — {pendingProgram.splitType}</p>
-                      <p>{pendingProgram.totalWeeks} weeks, {pendingProgram.daysPerWeek} days/week, Phase: {pendingProgram.phase}</p>
-                      {pendingProgram.specialization?.length > 0 && (
-                        <p>Specialization: {pendingProgram.specialization.join(', ')}</p>
-                      )}
-                    </div>
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                      {pendingProgram.weeks.map(week => (
-                        <div key={week.weekNumber} className="bg-slate-800/60 rounded-xl p-2.5 space-y-1">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-white">
-                              Week {week.weekNumber} {week.isDeload && <span className="text-amber-400">(Deload)</span>}
-                            </span>
-                            <span className="text-xs text-slate-500">{week.volumeLevel}</span>
-                          </div>
-                          {week.days.map(day => (
-                            <div key={day.dayNumber} className="text-xs text-slate-400 pl-2 border-l border-slate-700">
-                              <span className="text-slate-300 font-medium">{day.label}:</span>{' '}
-                              {day.exercises.map(e => e.name).join(', ')}
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {planChatHistory.length > 0 && !pendingProgram && (
-                  <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-3">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={coachQuestion}
-                        onChange={(e) => setCoachQuestion(e.target.value)}
-                        placeholder="Reply to the designer..."
-                        className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-slate-500"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && coachQuestion.trim()) {
-                            askProgramDesigner(coachQuestion);
-                            setCoachQuestion('');
-                          }
-                        }}
-                      />
-                      <button
-                        onClick={() => {
-                          if (coachQuestion.trim()) {
-                            askProgramDesigner(coachQuestion);
-                            setCoachQuestion('');
-                          }
-                        }}
-                        disabled={isCoachThinking || !coachQuestion.trim()}
-                        className="px-3 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-500 disabled:opacity-50 transition-all"
-                      >
-                        {isCoachThinking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {planChatHistory.length > 0 && (
-                  <button
-                    onClick={() => { setPlanChatHistory([]); setPendingProgram(undefined); }}
-                    className="w-full py-2 text-xs text-slate-500 hover:text-red-400 transition-colors"
-                  >
-                    Reset Conversation
-                  </button>
-                )}
-              </>
+            {unifiedChatHistory.length > 0 && (
+              <button
+                onClick={() => { setUnifiedChatHistory([]); setPendingProgram(undefined); setPendingPlanUpdate(undefined); }}
+                className="w-full py-2 text-xs text-slate-500 hover:text-red-400 transition-colors"
+              >
+                Clear Conversation
+              </button>
             )}
           </div>
         )}

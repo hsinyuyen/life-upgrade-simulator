@@ -5,11 +5,11 @@ import { geminiService } from '../services/geminiService';
 import { nutritionService, SearchFoodResult } from '../services/nutritionService';
 import { Html5Qrcode } from 'html5-qrcode';
 import {
-  X, ChevronDown, ChevronUp, Minus, Plus, ShoppingCart, 
+  X, ChevronDown, ChevronUp, Minus, Plus, ShoppingCart,
   TrendingUp, Utensils, Sparkles, Loader2, Check,
   Scale, Ruler, Target, Heart, BarChart3, RefreshCw,
   ClipboardList, ChevronRight, Search, ScanBarcode, Star,
-  Trash2, Flame, Zap, Camera
+  Trash2, Flame, Zap, Camera, ChefHat
 } from 'lucide-react';
 
 interface DietPanelProps {
@@ -21,7 +21,7 @@ interface DietPanelProps {
   workoutData?: WorkoutData;
 }
 
-type Tab = 'profile' | 'plan' | 'grocery' | 'logs' | 'nutrition';
+type Tab = 'profile' | 'plan' | 'cook' | 'logs' | 'nutrition';
 
 export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose, onNutritionBuff, onNutritionDebuff, workoutData }) => {
   const [isClosing, setIsClosing] = useState(false);
@@ -47,6 +47,12 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<{ analysis: string; suggestedChanges: string[] } | null>(null);
   const [expandedRecipe, setExpandedRecipe] = useState<string | null>(null);
+
+  // COOK tab state
+  const [cookIngredients, setCookIngredients] = useState('');
+  const [cookMealType, setCookMealType] = useState<string>('lunch');
+  const [cookResult, setCookResult] = useState<any>(null);
+  const [isCooking, setIsCooking] = useState(false);
   
   // Body log form
   const [logWeight, setLogWeight] = useState('');
@@ -599,6 +605,26 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
   };
 
   // Toggle grocery checked
+  const handleGenerateRecipe = async () => {
+    if (!cookIngredients.trim()) return;
+    setIsCooking(true);
+    setCookResult(null);
+    try {
+      const targets = currentPlan ? {
+        calories: currentPlan.totalCalories || 2000,
+        protein: currentPlan.totalProtein || 150,
+        carbs: currentPlan.totalCarbs || 200,
+        fat: currentPlan.totalFat || 60,
+      } : { calories: 2000, protein: 150, carbs: 200, fat: 60 };
+      const result = await geminiService.generateRecipeFromIngredients(cookIngredients, cookMealType, targets);
+      setCookResult(result);
+    } catch (err) {
+      console.error('Recipe generation failed:', err);
+    } finally {
+      setIsCooking(false);
+    }
+  };
+
   const toggleGrocery = (idx: number) => {
     if (!currentPlan) return;
     const newList = currentPlan.groceryList.map((item, i) => 
@@ -627,7 +653,7 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: 'profile', label: 'PROFILE', icon: <Target size={14} /> },
     { key: 'plan', label: 'PLAN', icon: <Utensils size={14} /> },
-    { key: 'grocery', label: 'GROCERY', icon: <ShoppingCart size={14} /> },
+    { key: 'cook', label: 'COOK', icon: <ChefHat size={14} /> },
     { key: 'nutrition', label: 'MACROS', icon: <Flame size={14} /> },
     { key: 'logs', label: 'BODY LOG', icon: <BarChart3 size={14} /> },
   ];
@@ -964,57 +990,150 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
         )}
 
         {/* ===== GROCERY TAB ===== */}
-        {activeTab === 'grocery' && (
+        {activeTab === 'cook' && (
           <div className="space-y-4">
-            {currentPlan && currentPlan.groceryList.length > 0 ? (
-              <>
+            {/* Header */}
+            <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 space-y-2">
+              <h3 className="font-game text-base text-emerald-400 flex items-center gap-1.5">
+                <ChefHat size={16} /> AI RECIPE GENERATOR
+              </h3>
+              <p className="text-xs text-slate-400">Tell the AI what ingredients you have and it will generate a macro-optimised recipe.</p>
+            </div>
+
+            {/* Input */}
+            <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 space-y-3">
+              <div>
+                <label className="text-xs text-slate-400 uppercase font-bold block mb-1.5">Ingredients you have</label>
+                <textarea
+                  value={cookIngredients}
+                  onChange={(e) => setCookIngredients(e.target.value)}
+                  placeholder="e.g. chicken breast, broccoli, olive oil, garlic, rice..."
+                  rows={3}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50 placeholder:text-slate-600 resize-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 uppercase font-bold block mb-1.5">Meal Type</label>
+                <div className="flex gap-2">
+                  {(['breakfast', 'lunch', 'dinner', 'snack'] as const).map(m => (
+                    <button
+                      key={m}
+                      onClick={() => setCookMealType(m)}
+                      className={`flex-1 py-1.5 text-xs font-game rounded-lg transition-all capitalize ${
+                        cookMealType === m ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={handleGenerateRecipe}
+                disabled={isCooking || !cookIngredients.trim()}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-game rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isCooking ? <><Loader2 size={16} className="animate-spin" /> Generating...</> : <><Sparkles size={16} /> Generate Recipe</>}
+              </button>
+            </div>
+
+            {/* Recipe Result */}
+            {cookResult && (
+              <div className="bg-slate-900/60 border border-emerald-500/20 rounded-2xl p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-game text-base text-emerald-400">DAILY GROCERY LIST</h3>
-                  <span className="text-xs text-slate-400">
-                    {currentPlan.groceryList.filter(g => g.checked).length}/{currentPlan.groceryList.length} items
-                  </span>
+                  <h4 className="font-game text-base text-emerald-400">{cookResult.name}</h4>
+                  <span className="text-xs text-slate-400">{cookResult.prepTime}</span>
                 </div>
 
-                {/* Group by category */}
-                {Object.entries(
-                  currentPlan.groceryList.reduce((groups: Record<string, (GroceryItem & { idx: number })[]>, item, idx) => {
-                    const cat = item.category || 'Other';
-                    if (!groups[cat]) groups[cat] = [];
-                    groups[cat].push({ ...item, idx });
-                    return groups;
-                  }, {})
-                ).map(([category, items]) => (
-                  <div key={category} className="space-y-2">
-                    <h4 className="text-xs text-slate-400 font-game uppercase px-1">{category}</h4>
-                    {items.map((item) => (
-                      <button
-                        key={item.idx}
-                        onClick={() => toggleGrocery(item.idx)}
-                        className={`w-full bg-slate-900/60 border rounded-xl p-3 flex items-center gap-3 transition-all ${
-                          item.checked 
-                            ? 'border-emerald-500/30 bg-emerald-500/5' 
-                            : 'border-white/10 hover:bg-slate-800/40'
-                        }`}
-                      >
-                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                          item.checked ? 'bg-emerald-500 border-emerald-500' : 'border-slate-600'
-                        }`}>
-                          {item.checked && <Check size={14} className="text-white" />}
-                        </div>
-                        <span className={`flex-1 text-left text-sm ${item.checked ? 'text-slate-500 line-through' : 'text-white'}`}>
-                          {item.name}
-                        </span>
-                        <span className="text-xs text-slate-500">{item.amount}</span>
-                      </button>
+                {/* Macros */}
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { label: 'KCAL', value: cookResult.macros?.calories, color: 'text-orange-400' },
+                    { label: 'PRO', value: `${cookResult.macros?.protein}g`, color: 'text-red-400' },
+                    { label: 'CARB', value: `${cookResult.macros?.carbs}g`, color: 'text-amber-400' },
+                    { label: 'FAT', value: `${cookResult.macros?.fat}g`, color: 'text-yellow-400' },
+                  ].map(m => (
+                    <div key={m.label} className="bg-slate-800/60 rounded-xl p-2 text-center">
+                      <div className={`text-sm font-bold ${m.color}`}>{m.value}</div>
+                      <div className="text-xs text-slate-500">{m.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Ingredients */}
+                <div>
+                  <h5 className="text-xs font-game text-slate-300 uppercase mb-2">Ingredients</h5>
+                  <ul className="space-y-1">
+                    {(cookResult.ingredients || []).map((ing: string, i: number) => (
+                      <li key={i} className="text-sm text-slate-300 flex items-start gap-2">
+                        <span className="text-emerald-500 mt-0.5">•</span>
+                        {ing}
+                      </li>
                     ))}
-                  </div>
-                ))}
-              </>
-            ) : (
-              <div className="text-center py-16 text-slate-500 space-y-4">
-                <ShoppingCart size={48} className="mx-auto opacity-30" />
-                <p className="font-game text-xl">NO GROCERY LIST</p>
-                <p className="text-sm">Generate a diet plan to see your grocery list</p>
+                  </ul>
+                </div>
+
+                {/* Instructions */}
+                <div>
+                  <h5 className="text-xs font-game text-slate-300 uppercase mb-2">Instructions</h5>
+                  <ol className="space-y-2">
+                    {(cookResult.instructions || []).map((step: string, i: number) => (
+                      <li key={i} className="text-sm text-slate-300 flex items-start gap-2">
+                        <span className="text-xs font-bold text-emerald-500 mt-0.5 min-w-[18px]">{i + 1}.</span>
+                        {step}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+
+                {cookResult.notes && (
+                  <p className="text-xs text-slate-400 italic border-t border-white/5 pt-3">{cookResult.notes}</p>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex gap-2 pt-2 border-t border-white/5">
+                  <button
+                    onClick={() => {
+                      addFoodEntry({
+                        name: cookResult.name || 'AI Recipe',
+                        calories: cookResult.macros?.calories || 0,
+                        protein: cookResult.macros?.protein || 0,
+                        carbs: cookResult.macros?.carbs || 0,
+                        fat: cookResult.macros?.fat || 0,
+                        servings: 1,
+                        servingSize: '1 serving',
+                        source: 'manual',
+                      });
+                      setActiveTab('nutrition');
+                    }}
+                    className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Plus size={14} /> Add to Log
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!currentPlan) return;
+                      const newRecipe: Recipe = {
+                        id: `recipe-cook-${Date.now()}`,
+                        name: cookResult.name || 'AI Recipe',
+                        mealType: cookMealType as any || 'lunch',
+                        ingredients: cookResult.ingredients || [],
+                        instructions: (cookResult.instructions || []).join('\n'),
+                        calories: cookResult.macros?.calories || 0,
+                        protein: cookResult.macros?.protein || 0,
+                        carbs: cookResult.macros?.carbs || 0,
+                        fat: cookResult.macros?.fat || 0,
+                        servings: 1,
+                      };
+                      const newPlan = { ...currentPlan, recipes: [...currentPlan.recipes, newRecipe] };
+                      setCurrentPlan(newPlan);
+                      saveAll(undefined, undefined, newPlan);
+                    }}
+                    className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold rounded-xl transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <Star size={14} /> Save Recipe
+                  </button>
+                </div>
               </div>
             )}
           </div>

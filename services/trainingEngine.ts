@@ -490,12 +490,23 @@ export class TrainingEngine {
       parts.push(`Vol:${dir}`);
     }
 
-    // Weight trend
+    // Weight trend — enhanced with rate and direction
     if (snap.weightTrend.length >= 2) {
-      const last = snap.weightTrend[snap.weightTrend.length - 1].weight;
-      const first = snap.weightTrend[0].weight;
-      const delta = Math.round((last - first) * 10) / 10;
-      parts.push(`Wt:${delta > 0 ? '+' : ''}${delta}kg`);
+      const last = snap.weightTrend[snap.weightTrend.length - 1];
+      const first = snap.weightTrend[0];
+      const delta = Math.round((last.weight - first.weight) * 10) / 10;
+      const days = Math.max(1, (new Date(last.date).getTime() - new Date(first.date).getTime()) / 86400000);
+      const weeklyRate = Math.round(((last.weight - first.weight) / days) * 7 * 100) / 100;
+      const dir = delta > 0.3 ? 'gaining' : delta < -0.3 ? 'losing' : 'stable';
+      parts.push(`Wt:${last.weight}kg(${delta > 0 ? '+' : ''}${delta}kg,${weeklyRate > 0 ? '+' : ''}${weeklyRate}kg/wk,${dir})`);
+    }
+
+    // Body fat trend
+    if (snap.bodyFatTrend.length >= 2) {
+      const bfLast = snap.bodyFatTrend[snap.bodyFatTrend.length - 1].bodyFat;
+      const bfFirst = snap.bodyFatTrend[0].bodyFat;
+      const bfDelta = Math.round((bfLast - bfFirst) * 10) / 10;
+      parts.push(`BF:${bfLast}%(${bfDelta > 0 ? '+' : ''}${bfDelta}%)`);
     }
 
     // Diet compliance
