@@ -2,6 +2,8 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { getUserData } from '../firebase.js';
 import { filterByWeeks } from '../utils/formatters.js';
 
+const DEFAULT_USER_ID = 'JDtFR7FZmGNpmCTkhugfNftpNQl2';
+
 export const bodyTools: Tool[] = [
   {
     name: 'get_body_logs',
@@ -9,10 +11,10 @@ export const bodyTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'Firebase Auth UID' },
+        userId: { type: 'string', description: 'Firebase Auth UID（可選，預設 Edward）' },
         weeks: { type: 'number', description: '查幾週（預設 12）' },
       },
-      required: ['userId'],
+      required: [],
     },
   },
 ];
@@ -21,7 +23,7 @@ export async function handleBodyTool(
   name: string,
   args: Record<string, unknown>
 ): Promise<string> {
-  const userId = args.userId as string;
+  const userId = (args.userId as string) || DEFAULT_USER_ID;
   const userData = await getUserData(userId);
   const dietData = userData.dietData as DietData | undefined;
 

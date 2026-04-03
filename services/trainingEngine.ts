@@ -104,19 +104,20 @@ export class TrainingEngine {
   private buildDeload(
     type: DeloadType, weight: number, repMin: number, repMax: number, sets: number
   ): ProgressionSuggestion {
+    // Correct deload strategy: keep weight or slight reduction, reduce sets by 1, lower RPE 1-2
     const reasons: Record<DeloadType, string> = {
-      volume: 'High volume fatigue — keep weight, cut sets in half',
-      intensity: 'High intensity fatigue — drop weight 15%, keep sets',
-      full: 'Overall burnout — reduce weight and volume',
+      volume: 'Volume deload — keep weight, drop 1 set per exercise, RPE cap 6-7',
+      intensity: 'Intensity deload — reduce weight 5-10%, keep sets, RPE cap 6-7',
+      full: 'Full deload — reduce weight 10%, drop 1 set, RPE cap 5-6',
     };
     switch (type) {
       case 'volume':
-        return { action: 'DELOAD', weight, reps: `${repMin}-${repMax}`, sets: Math.ceil(sets * 0.5), deloadType: type, reason: reasons[type] };
+        return { action: 'DELOAD', weight, reps: `${repMin}-${repMax}`, sets: Math.max(2, sets - 1), deloadType: type, reason: reasons[type] };
       case 'intensity':
-        return { action: 'DELOAD', weight: Math.round(weight * 0.85 * 10) / 10, reps: `${repMin}-${repMax}`, sets, deloadType: type, reason: reasons[type] };
+        return { action: 'DELOAD', weight: Math.round(weight * 0.92 * 10) / 10, reps: `${repMin}-${repMax}`, sets, deloadType: type, reason: reasons[type] };
       case 'full':
       default:
-        return { action: 'DELOAD', weight: Math.round(weight * 0.8 * 10) / 10, reps: `${repMin}-${repMax}`, sets: Math.ceil(sets * 0.5), deloadType: type, reason: reasons[type] };
+        return { action: 'DELOAD', weight: Math.round(weight * 0.9 * 10) / 10, reps: `${repMin}-${repMax}`, sets: Math.max(2, sets - 1), deloadType: type, reason: reasons[type] };
     }
   }
 

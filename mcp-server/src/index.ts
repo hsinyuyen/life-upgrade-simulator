@@ -10,6 +10,8 @@ import { programTools, handleProgramTool } from './tools/program-tools.js';
 import { dietTools, handleDietTool } from './tools/diet-tools.js';
 import { bodyTools, handleBodyTool } from './tools/body-tools.js';
 import { analysisTools, handleAnalysisTool } from './tools/analysis-tools.js';
+import { writeTools, handleWriteTool } from './tools/write-tools.js';
+import { memoryTools, handleMemoryTool } from './tools/memory-tools.js';
 
 const allTools = [
   ...workoutTools,
@@ -17,6 +19,8 @@ const allTools = [
   ...dietTools,
   ...bodyTools,
   ...analysisTools,
+  ...writeTools,
+  ...memoryTools,
 ];
 
 // Map tool name to handler
@@ -25,11 +29,13 @@ const programToolNames = new Set(programTools.map((t) => t.name));
 const dietToolNames = new Set(dietTools.map((t) => t.name));
 const bodyToolNames = new Set(bodyTools.map((t) => t.name));
 const analysisToolNames = new Set(analysisTools.map((t) => t.name));
+const writeToolNames = new Set(writeTools.map((t) => t.name));
+const memoryToolNames = new Set(memoryTools.map((t) => t.name));
 
 const server = new Server(
   {
     name: 'fitness-coach',
-    version: '1.0.0',
+    version: '2.0.0',
   },
   {
     capabilities: {
@@ -59,6 +65,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       result = await handleBodyTool(name, toolArgs);
     } else if (analysisToolNames.has(name)) {
       result = await handleAnalysisTool(name, toolArgs);
+    } else if (writeToolNames.has(name)) {
+      result = await handleWriteTool(name, toolArgs);
+    } else if (memoryToolNames.has(name)) {
+      result = await handleMemoryTool(name, toolArgs);
     } else {
       throw new Error(`Unknown tool: ${name}`);
     }
@@ -79,7 +89,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // Server is running - write to stderr so it doesn't interfere with MCP stdio protocol
-  process.stderr.write('Fitness Coach MCP Server started\n');
+  process.stderr.write('Fitness Coach MCP Server v2.0 started\n');
 }
 
 main().catch((err) => {

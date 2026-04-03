@@ -929,9 +929,19 @@ ${workoutSummary}`;
       w.days.some(d => !d.completed)
     ).length;
 
-    const prompt = `# Role: Program Iteration Engine
+    // Build a compact view of future (uncompleted) days for AI reference
+    const futureDaysSummary = program.weeks.map(w => {
+      const futureDays = w.days.filter(d => !d.completed);
+      if (futureDays.length === 0) return null;
+      const dayLines = futureDays.map(d =>
+        `  D${d.dayNumber} "${d.label}": ${d.exercises.map(e => `${e.name}(${e.targetSets}s×${e.targetReps}@RPE${e.targetRPE}${e.targetWeight ? ' ' + e.targetWeight + 'kg' : ''})`).join(', ')}`
+      ).join('\n');
+      return `W${w.weekNumber}${w.isDeload ? ' [DELOAD]' : ''}:\n${dayLines}`;
+    }).filter(Boolean).join('\n');
 
-You are reviewing a completed training session and adjusting the REMAINING program accordingly.
+    const prompt = `# Role: Program Iteration Engine (Diff-based)
+
+You are reviewing a completed session and suggesting adjustments to FUTURE sessions only.
 
 ## Current Program: "${program.name}" (${program.splitType}, ${program.phase})
 Week ${program.currentWeek} of ${program.totalWeeks} | ${remainingWeeks} weeks remaining
@@ -942,20 +952,28 @@ ${comparisonLines}
 ${staSection}
 ${aiContext ? `\n## Long-term Trends:\n${aiContext}` : ''}
 
+## Remaining Program (uncompleted days only):
+${futureDaysSummary}
+
 ## Iteration Rules:
-1. **Minor adjust (default)**: If actual is close to plan, apply standard double progression to the NEXT session that uses these exercises. Increase weight if all sets hit top of rep range at RPE<=9.
-2. **Exercise swap**: If an exercise missed targets for 2+ consecutive sessions, suggest replacing with an equivalent movement. Include the swap in your changes.
-3. **Structural change**: If overall fatigue >7 or a muscle's fatigue >8, consider:
-   - Inserting an early deload (move planned deload forward)
-   - Reducing sets for fatigued muscles in upcoming weeks
-   - Extending the mesocycle by 1 week if needed
+1. **Minor adjust (default)**: If actual close to plan, apply double progression to NEXT session with these exercises. Increase weight if all sets hit top rep range at RPE<=9.
+2. **Exercise swap**: If exercise missed targets badly, suggest replacing with an equivalent movement.
+3. **Structural change**: If overall fatigue >7, consider reducing sets or noting deload need.
 4. **Phase awareness**: During Cut, do NOT increase volume. During Bulk, can add sets if fatigue allows.
 
-## Output Format:
-Return your analysis and then the FULL updated program (all weeks, including completed ones) inside [PROGRAM_JSON]...[/PROGRAM_JSON] tags.
-Mark completed days as completed=true, completedSessionId set, completedAt set.
-Only modify FUTURE uncompleted days/weeks. Keep completed data unchanged.
-Include a brief 1-2 sentence summary of what you changed.`;
+## CRITICAL — Output Format:
+Do NOT return a full program. Return ONLY a JSON array of changes inside [CHANGES]...[/CHANGES] tags.
+Each change object has: { "week": number, "day": number, "exercise": "name", "action": "adjust"|"swap"|"remove"|"add", "updates": { targetSets?, targetReps?, targetRPE?, targetWeight?, newName?, newExercise? } }
+
+Example:
+[CHANGES]
+[
+  { "week": 2, "day": 1, "exercise": "Bench Press", "action": "adjust", "updates": { "targetWeight": 82.5 } },
+  { "week": 2, "day": 3, "exercise": "Overhead Press", "action": "swap", "updates": { "newName": "Dumbbell Press", "targetSets": 3, "targetReps": "10-12", "targetRPE": 8 } }
+]
+[/CHANGES]
+
+After the changes, write a 1-2 sentence summary of what you changed and why.`;
 
     try {
       const response = await this.getAI().models.generateContent({
@@ -964,79 +982,84 @@ Include a brief 1-2 sentence summary of what you changed.`;
       });
       const text = response.text || '';
 
-      const jsonMatch2 = text.match(/\[PROGRAM_JSON\]([\s\S]*?)\[\/PROGRAM_JSON\]/);
-      let updatedProgram = program;
-      if (jsonMatch2) {
+      // Apply diff-based changes to the original program (never replace it)
+      let updatedProgram = structuredClone(program);
+      const changesMatch = text.match(/\[CHANGES\]([\s\S]*?)\[\/CHANGES\]/);
+      if (changesMatch) {
         try {
-          const parsed = JSON.parse(jsonMatch2[1]);
-          const normalized = this.normalizeProgram(parsed);
-          // CRITICAL: Force-merge completed status from original program
-          // Use both index-based AND label-based matching for robustness
-          const mergedWeeks = normalized.weeks.map((nw, wi) => {
-            const origWeek = program.weeks[wi] || program.weeks.find(ow => ow.weekNumber === nw.weekNumber);
-            if (!origWeek) return nw;
-            return {
-              ...nw,
-              days: nw.days.map((nd, di) => {
-                // Try index first, then label match
-                const origDay = origWeek.days[di] || origWeek.days.find(od => od.label === nd.label);
-                if (origDay?.completed) {
-                  return { ...nd, completed: true, completedSessionId: origDay.completedSessionId, completedAt: origDay.completedAt };
+          const changes: Array<{
+            week: number; day: number; exercise: string;
+            action: 'adjust' | 'swap' | 'remove' | 'add';
+            updates: { targetSets?: number; targetReps?: string; targetRPE?: number; targetWeight?: number; newName?: string; newExercise?: any };
+          }> = JSON.parse(changesMatch[1]);
+
+          for (const change of changes) {
+            const weekIdx = updatedProgram.weeks.findIndex(w => w.weekNumber === change.week);
+            if (weekIdx < 0) continue;
+            const week = updatedProgram.weeks[weekIdx];
+            const dayIdx = week.days.findIndex(d => d.dayNumber === change.day);
+            if (dayIdx < 0) continue;
+            const day = week.days[dayIdx];
+
+            // Never modify completed days
+            if (day.completed) continue;
+
+            const exIdx = day.exercises.findIndex(e => e.name.toLowerCase() === change.exercise.toLowerCase());
+
+            switch (change.action) {
+              case 'adjust':
+                if (exIdx >= 0) {
+                  const ex = day.exercises[exIdx];
+                  if (change.updates.targetSets != null) ex.targetSets = change.updates.targetSets;
+                  if (change.updates.targetReps != null) ex.targetReps = change.updates.targetReps;
+                  if (change.updates.targetRPE != null) ex.targetRPE = change.updates.targetRPE;
+                  if (change.updates.targetWeight != null) ex.targetWeight = change.updates.targetWeight;
                 }
-                return nd;
-              }),
-            };
-          });
-
-          // Also scan ALL original weeks for any completed days that may have been missed
-          for (const origWeek of program.weeks) {
-            for (const origDay of origWeek.days) {
-              if (!origDay.completed) continue;
-              const targetWeek = mergedWeeks.find(mw => mw.weekNumber === origWeek.weekNumber);
-              if (!targetWeek) continue;
-              const targetDay = targetWeek.days.find(md => md.dayNumber === origDay.dayNumber || md.label === origDay.label);
-              if (targetDay && !targetDay.completed) {
-                targetDay.completed = true;
-                targetDay.completedSessionId = origDay.completedSessionId;
-                targetDay.completedAt = origDay.completedAt;
-              }
+                break;
+              case 'swap':
+                if (exIdx >= 0) {
+                  const ex = day.exercises[exIdx];
+                  ex.name = change.updates.newName || ex.name;
+                  if (change.updates.targetSets != null) ex.targetSets = change.updates.targetSets;
+                  if (change.updates.targetReps != null) ex.targetReps = change.updates.targetReps;
+                  if (change.updates.targetRPE != null) ex.targetRPE = change.updates.targetRPE;
+                  if (change.updates.targetWeight != null) ex.targetWeight = change.updates.targetWeight;
+                }
+                break;
+              case 'remove':
+                if (exIdx >= 0) {
+                  day.exercises.splice(exIdx, 1);
+                }
+                break;
+              case 'add':
+                if (change.updates.newExercise) {
+                  day.exercises.push({
+                    name: change.updates.newExercise.name || change.updates.newName || 'New Exercise',
+                    targetSets: change.updates.targetSets || 3,
+                    targetReps: change.updates.targetReps || '8-12',
+                    targetRPE: change.updates.targetRPE || 8,
+                    targetWeight: change.updates.targetWeight,
+                  });
+                }
+                break;
             }
           }
-
-          // Recalculate current position from merged data
-          let calcWeek = 1;
-          let calcDay = 1;
-          let foundIncomplete = false;
-          for (const w of mergedWeeks) {
-            const uncompletedIdx = w.days.findIndex(d => !d.completed);
-            if (uncompletedIdx >= 0) {
-              calcWeek = w.weekNumber;
-              calcDay = uncompletedIdx + 1;
-              foundIncomplete = true;
-              break;
-            }
-          }
-          if (!foundIncomplete) {
-            // All days completed, stay at last week
-            calcWeek = mergedWeeks.length;
-            calcDay = mergedWeeks[mergedWeeks.length - 1]?.days.length || 1;
-          }
-          updatedProgram = {
-            ...normalized,
-            weeks: mergedWeeks,
-            id: program.id,
-            createdAt: program.createdAt,
-            currentWeek: calcWeek,
-            currentDayInWeek: calcDay,
-            iterationCount: program.iterationCount + 1,
-            lastIteratedAt: Date.now(),
-          };
         } catch (e) {
-          console.error("Failed to parse iteration JSON:", e);
+          console.error("Failed to parse iteration changes:", e);
         }
       }
 
-      const summary = text.replace(/\[PROGRAM_JSON\][\s\S]*?\[\/PROGRAM_JSON\]/, '').trim();
+      // Safety check: week count must never decrease
+      if (updatedProgram.weeks.length < program.weeks.length) {
+        console.warn(`AI iteration tried to reduce weeks from ${program.weeks.length} to ${updatedProgram.weeks.length}. Rejecting.`);
+        updatedProgram = structuredClone(program);
+      }
+
+      // Update metadata
+      updatedProgram.iterationCount = program.iterationCount + 1;
+      updatedProgram.lastIteratedAt = Date.now();
+
+      const summary = text.replace(/\[CHANGES\][\s\S]*?\[\/CHANGES\]/, '').trim();
       return { updatedProgram, summary: summary.slice(0, 300) };
     } catch (e) {
       console.error("Program iteration failed:", e);

@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
   WorkoutData, WorkoutSession, Exercise, ExerciseSet, BodyPart, BODY_PARTS,
   DietData, SavedExercise, WorkoutRoutine, TrainingPhase, ExerciseType,
@@ -28,6 +28,10 @@ interface WorkoutPanelProps {
 type Tab = 'log' | 'plan' | 'history' | 'cardio' | 'coach';
 
 export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietData, onSave, onWorkoutXP, onClose }) => {
+  // Keep a ref to the latest onSave so async callbacks (AI iteration) never use stale closure
+  const onSaveRef = useRef(onSave);
+  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+
   const [isClosing, setIsClosing] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('log');
 
@@ -444,7 +448,24 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
       };
       const aiCtx = trainingEngine.buildAIContext(workoutData, dietData);
       geminiService.iterateProgram(updatedProgram, session, dayToMark, iterCtx, aiCtx).then(result => {
-        setTrainingProgram(result.updatedProgram);
+        // Bug fix: AI iteration may reset completed status — force the just-done day back to completed
+        const completedAt = Date.now();
+        const safeProgram: TrainingProgram = {
+          ...result.updatedProgram,
+          weeks: result.updatedProgram.weeks.map(w =>
+            w.weekNumber === nextProgramDay.week
+              ? {
+                  ...w,
+                  days: w.days.map(d =>
+                    d.dayNumber === dayToMark.dayNumber
+                      ? { ...d, completed: true, completedSessionId: session.id, completedAt }
+                      : d
+                  ),
+                }
+              : w
+          ),
+        };
+        setTrainingProgram(safeProgram);
         setIterationNotice(result.summary);
         const newLog: IterationLog = {
           id: `iter_${Date.now()}`,
@@ -456,17 +477,19 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
           dayNumber: trainingProgram.currentDayInWeek,
         };
         const updatedLogs = [...(workoutData.iterationLogs || []), newLog];
+        // Bug fix: spread workoutData first to preserve weeklyReports, cardioSessions, recoveryScores etc.
         const iterData: WorkoutData = {
+          ...workoutData,
           sessions: newSessions,
           exercisePRs: newPRs,
           savedExercises: newSavedExercises,
           routines,
           currentCycle: updatedCycle,
           exerciseE1RMs: newE1RMs,
-          trainingProgram: result.updatedProgram,
+          trainingProgram: safeProgram,
           iterationLogs: updatedLogs,
         };
-        onSave(iterData);
+        onSaveRef.current(iterData);
         setTimeout(() => setIterationNotice(null), 10000);
       }).catch(err => {
         console.error('Iteration failed:', err);
@@ -476,6 +499,7 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
     }
 
     const newData: WorkoutData = {
+      ...workoutData,
       sessions: newSessions,
       exercisePRs: newPRs,
       savedExercises: newSavedExercises,
@@ -962,6 +986,17 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
                         <Trash2 size={16} />
                       </button>
                     </div>
+
+                    {/* Target from program plan */}
+                    {ex.sets[0]?.targetReps && (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <Target size={10} className="text-violet-400" />
+                        <span className="text-violet-300 font-game">
+                          {ex.sets.length}s × {ex.sets[0].targetReps} @RPE{ex.sets[0].targetRPE || '?'}
+                          {ex.sets[0].targetWeight ? ` ${ex.sets[0].targetWeight}kg` : ''}
+                        </span>
+                      </div>
+                    )}
 
                     {/* Volume + e1RM info */}
                     <div className="flex items-center gap-3 text-xs text-slate-400 flex-wrap">

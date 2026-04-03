@@ -1,6 +1,8 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { getUserData } from '../firebase.js';
 
+const DEFAULT_USER_ID = 'JDtFR7FZmGNpmCTkhugfNftpNQl2';
+
 export const programTools: Tool[] = [
   {
     name: 'get_training_program',
@@ -8,9 +10,9 @@ export const programTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'Firebase Auth UID' },
+        userId: { type: 'string', description: 'Firebase Auth UID（可選，預設 Edward）' },
       },
-      required: ['userId'],
+      required: [],
     },
   },
 ];
@@ -19,7 +21,7 @@ export async function handleProgramTool(
   name: string,
   args: Record<string, unknown>
 ): Promise<string> {
-  const userId = args.userId as string;
+  const userId = (args.userId as string) || DEFAULT_USER_ID;
   const userData = await getUserData(userId);
   const workoutData = userData.workoutData as WorkoutData | undefined;
 

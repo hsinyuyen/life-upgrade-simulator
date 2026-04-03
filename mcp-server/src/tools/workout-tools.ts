@@ -2,6 +2,8 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { getUserData } from '../firebase.js';
 import { calcE1RM, filterByWeeks, filterByDays, groupByWeek, calcTrend } from '../utils/formatters.js';
 
+const DEFAULT_USER_ID = 'JDtFR7FZmGNpmCTkhugfNftpNQl2';
+
 export const workoutTools: Tool[] = [
   {
     name: 'get_recent_workouts',
@@ -9,12 +11,12 @@ export const workoutTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'Firebase Auth UID' },
+        userId: { type: 'string', description: 'Firebase Auth UID（可選，預設 Edward）' },
         count: { type: 'number', description: '取幾筆（預設 10）' },
         bodyPart: { type: 'string', description: '篩選部位（可選）: chest|back|shoulder|arm|leg|core|cardio' },
         dateFrom: { type: 'string', description: '起始日期 YYYY-MM-DD（可選）' },
       },
-      required: ['userId'],
+      required: [],
     },
   },
   {
@@ -23,11 +25,11 @@ export const workoutTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'Firebase Auth UID' },
+        userId: { type: 'string', description: 'Firebase Auth UID（可選，預設 Edward）' },
         exerciseName: { type: 'string', description: '動作名稱（例如 Bench Press）' },
         weeks: { type: 'number', description: '查幾週內（預設 8）' },
       },
-      required: ['userId', 'exerciseName'],
+      required: ['exerciseName'],
     },
   },
   {
@@ -36,9 +38,9 @@ export const workoutTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'Firebase Auth UID' },
+        userId: { type: 'string', description: 'Firebase Auth UID（可選，預設 Edward）' },
       },
-      required: ['userId'],
+      required: [],
     },
   },
   {
@@ -47,7 +49,7 @@ export const workoutTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'Firebase Auth UID' },
+        userId: { type: 'string', description: 'Firebase Auth UID（可選，預設 Edward）' },
         exerciseNames: {
           type: 'array',
           items: { type: 'string' },
@@ -55,7 +57,7 @@ export const workoutTools: Tool[] = [
         },
         weeks: { type: 'number', description: '查幾週（預設 12）' },
       },
-      required: ['userId'],
+      required: [],
     },
   },
 ];
@@ -64,7 +66,7 @@ export async function handleWorkoutTool(
   name: string,
   args: Record<string, unknown>
 ): Promise<string> {
-  const userId = args.userId as string;
+  const userId = (args.userId as string) || DEFAULT_USER_ID;
   const userData = await getUserData(userId);
   const workoutData = userData.workoutData as WorkoutData | undefined;
 

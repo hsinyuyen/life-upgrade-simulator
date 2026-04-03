@@ -588,10 +588,10 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
     saveAll(undefined, newLogs, undefined);
   };
 
-  // Adjust recipe servings
+  // Adjust recipe servings — respects dayMode (training vs rest)
   const adjustServings = (recipeId: string, delta: number) => {
     if (!currentPlan) return;
-    const newRecipes = currentPlan.recipes.map(r => {
+    const updateRecipes = (recipes: Recipe[]) => recipes.map(r => {
       if (r.id === recipeId) {
         const current = r.adjustedServings || r.servings;
         const newServings = Math.max(0.5, current + delta);
@@ -599,7 +599,16 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
       }
       return r;
     });
-    const newPlan = { ...currentPlan, recipes: newRecipes };
+
+    let newPlan: DietPlan;
+    if (dayMode === 'rest' && currentPlan.restDayPlan) {
+      newPlan = {
+        ...currentPlan,
+        restDayPlan: { ...currentPlan.restDayPlan, recipes: updateRecipes(currentPlan.restDayPlan.recipes) },
+      };
+    } else {
+      newPlan = { ...currentPlan, recipes: updateRecipes(currentPlan.recipes) };
+    }
     setCurrentPlan(newPlan);
     saveAll(undefined, undefined, newPlan);
   };
@@ -992,12 +1001,27 @@ export const DietPanel: React.FC<DietPanelProps> = ({ dietData, onSave, onClose,
         {/* ===== GROCERY TAB ===== */}
         {activeTab === 'cook' && (
           <div className="space-y-4">
-            {/* Header */}
-            <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 space-y-2">
+            {/* Header + Daily Macro Targets */}
+            <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 space-y-3">
               <h3 className="font-game text-base text-emerald-400 flex items-center gap-1.5">
                 <ChefHat size={16} /> AI RECIPE GENERATOR
               </h3>
               <p className="text-xs text-slate-400">Tell the AI what ingredients you have and it will generate a macro-optimised recipe.</p>
+              {currentPlan && (
+                <div className="grid grid-cols-4 gap-2 pt-1">
+                  {[
+                    { label: 'KCAL', value: currentPlan.totalCalories, color: 'text-orange-400' },
+                    { label: 'PRO', value: `${currentPlan.totalProtein}g`, color: 'text-red-400' },
+                    { label: 'CARB', value: `${currentPlan.totalCarbs}g`, color: 'text-amber-400' },
+                    { label: 'FAT', value: `${currentPlan.totalFat}g`, color: 'text-yellow-400' },
+                  ].map(m => (
+                    <div key={m.label} className="bg-slate-800/60 rounded-xl p-2 text-center">
+                      <div className={`text-sm font-bold ${m.color}`}>{m.value}</div>
+                      <div className="text-xs text-slate-500">{m.label}/day</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Input */}

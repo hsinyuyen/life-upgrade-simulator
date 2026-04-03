@@ -2,7 +2,34 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { getUserData } from '../firebase.js';
 import { calcE1RM, filterByDays, filterByWeeks } from '../utils/formatters.js';
 
+const DEFAULT_USER_ID = 'JDtFR7FZmGNpmCTkhugfNftpNQl2';
+
 export const analysisTools: Tool[] = [
+  {
+    name: 'analyze_training_trends',
+    description:
+      '全面分析訓練趨勢：e1RM 進步/停滯/退步動作清單、各肌群週 sets vs MEV/MAV、疲勞趨勢、是否需要 deload、弱點肌群分析',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'string', description: 'Firebase Auth UID（可選，預設 Edward）' },
+        weeks: { type: 'number', description: '分析幾週（預設 4）' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'generate_weekly_report',
+    description:
+      '生成本週完整週報：訓練摘要 vs 計劃、飲食合規、體重變化、疲勞恢復狀態。aiSummary 和 aiRecommendations 留空由 Claude 填寫',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'string', description: 'Firebase Auth UID（可選，預設 Edward）' },
+      },
+      required: [],
+    },
+  },
   {
     name: 'get_cardio_sessions',
     description: '取得有氧訓練紀錄，含每週總時間統計',
@@ -38,9 +65,9 @@ export const analysisTools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        userId: { type: 'string', description: 'Firebase Auth UID' },
+        userId: { type: 'string', description: 'Firebase Auth UID（可選，預設 Edward）' },
       },
-      required: ['userId'],
+      required: [],
     },
   },
 ];
@@ -49,10 +76,16 @@ export async function handleAnalysisTool(
   name: string,
   args: Record<string, unknown>
 ): Promise<string> {
-  const userId = args.userId as string;
+  const userId = (args.userId as string) || DEFAULT_USER_ID;
   const userData = await getUserData(userId);
 
   switch (name) {
+    case 'analyze_training_trends':
+      return handleAnalyzeTrainingTrends(userData.workoutData as WorkoutData | undefined, args);
+
+    case 'generate_weekly_report':
+      return handleGenerateWeeklyReport(userData);
+
     case 'get_cardio_sessions':
       return handleGetCardioSessions(userData.workoutData as WorkoutData | undefined, args);
 
@@ -301,6 +334,247 @@ function handleAnalyzeOverallStatus(userData: FirebaseUserData): string {
       latestDate: recentBodyLogs[0]?.date ?? null,
     },
     warnings,
+  });
+}
+
+function handleAnalyzeTrainingTrends(
+  workoutData: WorkoutData | undefined,
+  args: Record<string, unknown>
+): string {
+  if (!workoutData) {
+    return JSON.stringify({ error: '無訓練資料' });
+  }
+
+  const weeks = (args.weeks as number) ?? 4;
+  const cutoffDate = new Date(Date.now() - weeks * 7 * 86400000).toISOString().slice(0, 10);
+
+  const sessions = (workoutData.sessions ?? []).filter((s) => s.date >= cutoffDate);
+
+  // ── e1RM trends per exercise ──
+  const exerciseE1RMs = new Map<string, { dates: string[]; e1rms: number[] }>();
+  for (const session of sessions) {
+    for (const exercise of session.exercises) {
+      const best = Math.max(...exercise.sets.map((s) => calcE1RM(s.weight, s.reps)));
+      if (!exerciseE1RMs.has(exercise.name)) {
+        exerciseE1RMs.set(exercise.name, { dates: [], e1rms: [] });
+      }
+      exerciseE1RMs.get(exercise.name)!.dates.push(session.date);
+      exerciseE1RMs.get(exercise.name)!.e1rms.push(best);
+    }
+  }
+
+  const e1rmTrends = Array.from(exerciseE1RMs.entries()).map(([name, data]) => {
+    const firstE1RM = data.e1rms[0];
+    const lastE1RM = data.e1rms[data.e1rms.length - 1];
+    const changePct = firstE1RM > 0 ? Math.round(((lastE1RM - firstE1RM) / firstE1RM) * 1000) / 10 : 0;
+    const status = changePct > 2 ? 'progressing' : changePct < -2 ? 'declining' : 'plateau';
+    return { exercise: name, sessions: data.dates.length, firstE1RM, lastE1RM, changePct, status };
+  });
+  e1rmTrends.sort((a, b) => b.changePct - a.changePct);
+
+  // ── Sets per muscle group per week ──
+  const MEV_MAV: Record<string, { mev: number; mav: number }> = {
+    chest: { mev: 6, mav: 16 },
+    back: { mev: 10, mav: 20 },
+    shoulder: { mev: 8, mav: 16 },
+    arm: { mev: 8, mav: 16 },
+    leg: { mev: 8, mav: 18 },
+    core: { mev: 0, mav: 16 },
+  };
+
+  const setsPerBodyPart = new Map<string, number>();
+  for (const session of sessions) {
+    for (const bp of (session.bodyParts ?? [])) {
+      setsPerBodyPart.set(bp, (setsPerBodyPart.get(bp) ?? 0) + session.totalSets);
+    }
+  }
+
+  const muscleGroupAnalysis = Object.entries(MEV_MAV).map(([bp, { mev, mav }]) => {
+    const totalSets = setsPerBodyPart.get(bp) ?? 0;
+    const weeklySets = Math.round((totalSets / weeks) * 10) / 10;
+    const status =
+      weeklySets === 0 ? 'undertrained'
+      : weeklySets < mev ? 'below_MEV'
+      : weeklySets > mav ? 'above_MAV'
+      : 'optimal';
+    return { bodyPart: bp, weeklySets, mev, mav, status };
+  });
+
+  // ── Fatigue trend from recovery scores ──
+  const recoveryScores = workoutData.recoveryScores ?? [];
+  const recentScores = recoveryScores
+    .filter((s) => s.date >= cutoffDate)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  let fatigueTrend = 'no data';
+  let avgReadiness: number | null = null;
+  if (recentScores.length > 0) {
+    avgReadiness = Math.round(
+      (recentScores.reduce((s, r) => s + r.overallReadiness, 0) / recentScores.length) * 10
+    ) / 10;
+    if (recentScores.length >= 4) {
+      const half = Math.floor(recentScores.length / 2);
+      const recent = recentScores.slice(0, half).reduce((s, r) => s + r.overallReadiness, 0) / half;
+      const older = recentScores.slice(half).reduce((s, r) => s + r.overallReadiness, 0) / half;
+      fatigueTrend = recent < older - 0.5 ? 'accumulating (readiness declining)' : recent > older + 0.5 ? 'recovering' : 'stable';
+    }
+  }
+
+  // ── Deload recommendation ──
+  const needsDeload =
+    (avgReadiness !== null && avgReadiness < 5.5) ||
+    (workoutData.trainingProgram?.currentWeek ?? 0) >= 4;
+
+  const deloadReason: string[] = [];
+  if (avgReadiness !== null && avgReadiness < 5.5) {
+    deloadReason.push(`平均恢復評分偏低（${avgReadiness}/10）`);
+  }
+  if ((workoutData.trainingProgram?.currentWeek ?? 0) >= 4) {
+    deloadReason.push(`已連續訓練 ${workoutData.trainingProgram?.currentWeek} 週`);
+  }
+
+  // ── Weakness analysis ──
+  const weakPoints = muscleGroupAnalysis
+    .filter((m) => m.status === 'below_MEV' || m.status === 'undertrained')
+    .map((m) => m.bodyPart);
+
+  const progressing = e1rmTrends.filter((e) => e.status === 'progressing').map((e) => e.exercise);
+  const stagnating = e1rmTrends.filter((e) => e.status === 'plateau').map((e) => e.exercise);
+  const declining = e1rmTrends.filter((e) => e.status === 'declining').map((e) => e.exercise);
+
+  return JSON.stringify({
+    analysisWeeks: weeks,
+    sessionsAnalyzed: sessions.length,
+    e1rmTrends: {
+      progressing,
+      stagnating,
+      declining,
+      details: e1rmTrends,
+    },
+    muscleGroupVolume: muscleGroupAnalysis,
+    fatigue: {
+      avgReadiness,
+      trend: fatigueTrend,
+      recentScores: recentScores.slice(0, 7).map((s) => ({
+        date: s.date,
+        overallReadiness: s.overallReadiness,
+        energyLevel: s.energyLevel,
+        muscleSoreness: s.muscleSoreness,
+      })),
+    },
+    deloadRecommendation: {
+      needed: needsDeload,
+      reasons: deloadReason,
+    },
+    weakPoints,
+  });
+}
+
+function handleGenerateWeeklyReport(userData: FirebaseUserData): string {
+  const workoutData = userData.workoutData as WorkoutData | undefined;
+  const dietData = userData.dietData as DietData | undefined;
+
+  const today = new Date();
+  const weekAgo = new Date(today.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+  const todayStr = today.toISOString().slice(0, 10);
+
+  // ── Training ──
+  const sessions = (workoutData?.sessions ?? []).filter((s) => s.date >= weekAgo);
+  sessions.sort((a, b) => a.date.localeCompare(b.date));
+
+  const program = workoutData?.trainingProgram;
+  const currentWeekData = program?.weeks.find((w) => w.weekNumber === program.currentWeek);
+  const plannedDays = currentWeekData?.days.length ?? 0;
+  const completedDays = currentWeekData?.days.filter((d) => d.completed).length ?? 0;
+
+  const exerciseSummary = new Map<string, { totalSets: number; maxE1RM: number }>();
+  let totalSets = 0;
+  let newPRs = 0;
+  for (const session of sessions) {
+    totalSets += session.totalSets;
+    newPRs += session.exercises.filter((e) => e.isPR).length;
+    for (const ex of session.exercises) {
+      const best = Math.max(...ex.sets.map((s) => calcE1RM(s.weight, s.reps)));
+      if (!exerciseSummary.has(ex.name)) {
+        exerciseSummary.set(ex.name, { totalSets: 0, maxE1RM: 0 });
+      }
+      const entry = exerciseSummary.get(ex.name)!;
+      entry.totalSets += ex.sets.length;
+      entry.maxE1RM = Math.max(entry.maxE1RM, best);
+    }
+  }
+
+  // ── Diet ──
+  const nutritionLogs = (dietData?.nutritionData?.dailyLogs ?? []).filter((l) => l.date >= weekAgo);
+  const avgCalories = nutritionLogs.length > 0
+    ? Math.round(nutritionLogs.reduce((s, l) => s + l.totalCalories, 0) / nutritionLogs.length)
+    : null;
+  const avgProtein = nutritionLogs.length > 0
+    ? Math.round(nutritionLogs.reduce((s, l) => s + l.totalProtein, 0) / nutritionLogs.length)
+    : null;
+  const dietCompliancePct = nutritionLogs.length > 0
+    ? Math.round((nutritionLogs.filter((l) => l.macroHit).length / nutritionLogs.length) * 100)
+    : null;
+
+  // ── Body weight ──
+  const recentBodyLogs = (dietData?.bodyLogs ?? [])
+    .filter((l) => l.date >= weekAgo)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const startWeight = recentBodyLogs[0]?.weight ?? null;
+  const endWeight = recentBodyLogs[recentBodyLogs.length - 1]?.weight ?? null;
+  const weightChange = startWeight && endWeight ? Math.round((endWeight - startWeight) * 10) / 10 : null;
+
+  // ── Recovery ──
+  const recoveryEntries = (workoutData?.recoveryScores ?? []).filter((s) => s.date >= weekAgo);
+  const avgReadiness = recoveryEntries.length > 0
+    ? Math.round(recoveryEntries.reduce((s, r) => s + r.overallReadiness, 0) / recoveryEntries.length * 10) / 10
+    : null;
+  const avgSleepHours = recoveryEntries.length > 0
+    ? Math.round(recoveryEntries.reduce((s, r) => s + r.sleepHours, 0) / recoveryEntries.length * 10) / 10
+    : null;
+  const avgSoreness = recoveryEntries.length > 0
+    ? Math.round(recoveryEntries.reduce((s, r) => s + r.muscleSoreness, 0) / recoveryEntries.length * 10) / 10
+    : null;
+
+  return JSON.stringify({
+    reportDate: todayStr,
+    weekRange: { from: weekAgo, to: todayStr },
+    training: {
+      sessionCount: sessions.length,
+      plannedDays,
+      completedDays,
+      adherencePct: plannedDays > 0 ? Math.round((completedDays / plannedDays) * 100) : null,
+      totalSets,
+      newPRs,
+      sessionDates: sessions.map((s) => s.date),
+      exerciseSummary: Array.from(exerciseSummary.entries()).map(([name, data]) => ({
+        exercise: name,
+        totalSets: data.totalSets,
+        maxE1RM: Math.round(data.maxE1RM * 10) / 10,
+      })),
+    },
+    diet: {
+      loggedDays: nutritionLogs.length,
+      avgCalories,
+      targetCalories: dietData?.profile?.targetCalories ?? null,
+      avgProtein,
+      compliancePct: dietCompliancePct,
+    },
+    body: {
+      startWeight,
+      endWeight,
+      weightChange,
+      currentBodyFat: recentBodyLogs[recentBodyLogs.length - 1]?.bodyFat ?? null,
+    },
+    recovery: {
+      avgReadiness,
+      avgSleepHours,
+      avgMuscleSoreness: avgSoreness,
+      entries: recoveryEntries.length,
+    },
+    // To be filled by Claude:
+    aiSummary: null,
+    aiRecommendations: [],
   });
 }
 

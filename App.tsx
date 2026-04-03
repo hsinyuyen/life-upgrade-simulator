@@ -34,7 +34,8 @@ import {
   Loader2,
   Volume2,
   VolumeX,
-  BookOpen
+  BookOpen,
+  ChevronDown
 } from 'lucide-react';
 import { LiveCoach } from './components/LiveCoach';
 import { QuestPanel } from './components/QuestPanel';
@@ -1854,45 +1855,50 @@ const App: React.FC = () => {
           </button>
         </div>
 
-        {/* Latest Weekly Report */}
+        {/* Latest Weekly Report — collapsible to avoid blocking XP bars */}
         {workoutData.weeklyReports && workoutData.weeklyReports.length > 0 && (() => {
           const latest = workoutData.weeklyReports[workoutData.weeklyReports.length - 1];
           const daysSince = Math.floor((Date.now() - latest.timestamp) / (1000 * 60 * 60 * 24));
-          if (daysSince > 14) return null; // Don't show stale reports
+          if (daysSince > 14) return null;
           return (
             <div className="px-8 mb-4">
-              <div className="bg-violet-500/10 border border-violet-500/20 rounded-2xl p-4 space-y-2">
-                <div className="flex items-center justify-between">
+              <details className="group">
+                <summary className="bg-violet-500/10 border border-violet-500/20 rounded-2xl px-4 py-3 flex items-center justify-between cursor-pointer list-none">
                   <span className="font-game text-sm text-violet-400">WEEKLY REPORT</span>
-                  <span className="text-xs text-slate-500">{latest.weekStartDate} ~ {latest.weekEndDate}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">{latest.weekStartDate} ~ {latest.weekEndDate}</span>
+                    <ChevronDown size={14} className="text-slate-500 group-open:rotate-180 transition-transform" />
+                  </div>
+                </summary>
+                <div className="bg-violet-500/10 border border-t-0 border-violet-500/20 rounded-b-2xl -mt-2 pt-4 px-4 pb-4 space-y-2">
+                  <p className="text-sm text-slate-300">{latest.aiSummary}</p>
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    <div>
+                      <div className="text-lg font-bold text-rose-400">{latest.totalSessions}</div>
+                      <div className="text-[10px] text-slate-500">SESSIONS</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-orange-400">{latest.avgCalories}</div>
+                      <div className="text-[10px] text-slate-500">AVG KCAL</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-emerald-400">{latest.dietCompliancePct}%</div>
+                      <div className="text-[10px] text-slate-500">COMPLY</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-blue-400">{latest.avgReadiness}</div>
+                      <div className="text-[10px] text-slate-500">READY</div>
+                    </div>
+                  </div>
+                  {latest.aiRecommendations.length > 0 && (
+                    <div className="space-y-1 pt-1 border-t border-white/5">
+                      {latest.aiRecommendations.slice(0, 3).map((rec, i) => (
+                        <p key={i} className="text-xs text-slate-400">• {rec}</p>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <p className="text-sm text-slate-300">{latest.aiSummary}</p>
-                <div className="grid grid-cols-4 gap-2 text-center">
-                  <div>
-                    <div className="text-lg font-bold text-rose-400">{latest.totalSessions}</div>
-                    <div className="text-[10px] text-slate-500">SESSIONS</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold text-orange-400">{latest.avgCalories}</div>
-                    <div className="text-[10px] text-slate-500">AVG KCAL</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold text-emerald-400">{latest.dietCompliancePct}%</div>
-                    <div className="text-[10px] text-slate-500">COMPLY</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold text-blue-400">{latest.avgReadiness}</div>
-                    <div className="text-[10px] text-slate-500">READY</div>
-                  </div>
-                </div>
-                {latest.aiRecommendations.length > 0 && (
-                  <div className="space-y-1 pt-1 border-t border-white/5">
-                    {latest.aiRecommendations.slice(0, 3).map((rec, i) => (
-                      <p key={i} className="text-xs text-slate-400">• {rec}</p>
-                    ))}
-                  </div>
-                )}
-              </div>
+              </details>
             </div>
           );
         })()}
