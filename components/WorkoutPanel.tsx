@@ -437,65 +437,9 @@ export const WorkoutPanel: React.FC<WorkoutPanelProps> = ({ workoutData, dietDat
       };
       setTrainingProgram(updatedProgram);
 
-      // Trigger async iteration in background
-      const iterCtx: STAContext = {
-        cycle: updatedCycle,
-        overallFatigue: newFatigue,
-        bodyPartFatigue: trainingEngine.calculateBodyPartFatigue(newSessions, newSavedExercises),
-        weeklyMuscleSets: trainingEngine.getWeeklyMuscleSetCount(newSessions, newSavedExercises),
-        exerciseE1RMs: newE1RMs,
-        exerciseTypes,
-      };
-      const aiCtx = trainingEngine.buildAIContext(workoutData, dietData);
-      geminiService.iterateProgram(updatedProgram, session, dayToMark, iterCtx, aiCtx).then(result => {
-        // Bug fix: AI iteration may reset completed status — force the just-done day back to completed
-        const completedAt = Date.now();
-        const safeProgram: TrainingProgram = {
-          ...result.updatedProgram,
-          weeks: result.updatedProgram.weeks.map(w =>
-            w.weekNumber === nextProgramDay.week
-              ? {
-                  ...w,
-                  days: w.days.map(d =>
-                    d.dayNumber === dayToMark.dayNumber
-                      ? { ...d, completed: true, completedSessionId: session.id, completedAt }
-                      : d
-                  ),
-                }
-              : w
-          ),
-        };
-        setTrainingProgram(safeProgram);
-        setIterationNotice(result.summary);
-        const newLog: IterationLog = {
-          id: `iter_${Date.now()}`,
-          date: new Date().toISOString().split('T')[0],
-          timestamp: Date.now(),
-          sessionId: session.id,
-          summary: result.summary,
-          weekNumber: trainingProgram.currentWeek,
-          dayNumber: trainingProgram.currentDayInWeek,
-        };
-        const updatedLogs = [...(workoutData.iterationLogs || []), newLog];
-        // Bug fix: spread workoutData first to preserve weeklyReports, cardioSessions, recoveryScores etc.
-        const iterData: WorkoutData = {
-          ...workoutData,
-          sessions: newSessions,
-          exercisePRs: newPRs,
-          savedExercises: newSavedExercises,
-          routines,
-          currentCycle: updatedCycle,
-          exerciseE1RMs: newE1RMs,
-          trainingProgram: safeProgram,
-          iterationLogs: updatedLogs,
-        };
-        onSaveRef.current(iterData);
-        setTimeout(() => setIterationNotice(null), 10000);
-      }).catch(err => {
-        console.error('Iteration failed:', err);
-        setIterationNotice(`⚠️ AI analysis failed: ${err?.message || 'Unknown error'}. Your workout was saved successfully.`);
-        setTimeout(() => setIterationNotice(null), 15000);
-      });
+      // Auto-iteration disabled — was corrupting program structure (compressing exercises, overwriting weeks).
+      // Users can still request plan changes via the unified AI Coach chat.
+      console.log('[completeWorkout] Auto-iteration disabled. Workout saved, program unchanged.');
     }
 
     const newData: WorkoutData = {
